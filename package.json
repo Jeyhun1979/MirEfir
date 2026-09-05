@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "author": "OnePlayer",
-  "description": "IPTV player for Windows and Android",
+  "description": "IPTV player for Windows, Linux and Android",
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
@@ -55,6 +55,13 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "target": [
+        "tar.gz"
+      ],
+      "category": "AudioVideo",
+      "synopsis": "IPTV player"
     }
   }
 }

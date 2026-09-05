@@ -4,7 +4,12 @@ IPTV-плеер для Windows и Android. Плейлист задаёте са�
 
 ## Скачать
 
-Готовые сборки — в [Releases](https://github.com/Jeyhun1979/OnePlayer/releases). Для Windows: портативный `.exe` (без установки).
+Готовые сборки — в [Releases](https://github.com/Jeyhun1979/OnePlayer/releases).
+
+- Windows: `OnePlayer-*-windows.exe` (без установки)
+- Linux: `OnePlayer-*-linux-x64.tar.gz` — распаковать и запустить `OnePlayer`
+- Android: APK позже
+- macOS: сборка только с Mac, в этом релизе нет
 
 При запуске новой версии плеер предложит **Обновить** или **Пропустить**.
 

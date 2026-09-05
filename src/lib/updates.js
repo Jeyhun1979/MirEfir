@@ -9,6 +9,20 @@ function parseVersion(value) {
     .map((part) => Number.parseInt(part, 10) || 0)
 }
 
+function pickDownload(assets) {
+  const ua = navigator.userAgent
+  if (/Linux/i.test(ua) && !/Android/i.test(ua)) {
+    return assets.find((item) => /\.AppImage$/i.test(item.name)) || assets.find((item) => /\.tar\.gz$/i.test(item.name))
+  }
+  if (/Mac/i.test(ua)) {
+    return assets.find((item) => /\.dmg$/i.test(item.name))
+  }
+  return (
+    assets.find((item) => /\.exe$/i.test(item.name) && !/setup/i.test(item.name)) ||
+    assets.find((item) => /\.exe$/i.test(item.name))
+  )
+}
+
 export function isNewerVersion(remote, local = APP_VERSION) {
   const a = parseVersion(remote)
   const b = parseVersion(local)
@@ -32,8 +46,7 @@ export async function checkForUpdate() {
     const data = await response.json()
     const version = String(data.tag_name || data.name || '').replace(/^v/i, '')
     if (!version || !isNewerVersion(version) || localStorage.getItem(SKIP_KEY) === version) return null
-    const asset = (data.assets || []).find((item) => /\.exe$/i.test(item.name) && !/setup/i.test(item.name))
-      || (data.assets || []).find((item) => /\.exe$/i.test(item.name))
+    const asset = pickDownload(data.assets || [])
     return {
       version,
       notes: data.body || '',
