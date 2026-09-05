@@ -1,0 +1,13 @@
+export const APP_VERSION = '1.0.0'
+export const GITHUB_OWNER = ''
+export const GITHUB_REPO = 'OnePlayer'
+
+export function githubReleasesUrl() {
+  if (!GITHUB_OWNER) return ''
+  return `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`
+}
+
+export function githubLatestApi() {
+  if (!GITHUB_OWNER) return ''
+  return `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
+}

@@ -1,0 +1,112 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --color-void: #06070a;
+  --color-panel: #0b0e14;
+  --color-raised: #121821;
+  --color-line: #1b2330;
+  --color-accent: #2f7cf6;
+  --color-accent-soft: #5aa4ff;
+  --color-live: #ff3355;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: #06070a;
+  color: #eef2f7;
+  font-family: var(--font-sans);
+  overflow: hidden;
+  user-select: none;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  cursor: default;
+}
+
+.air-mouse,
+.air-mouse * {
+  cursor: default !important;
+}
+
+button:focus,
+button:hover {
+  outline: none;
+}
+
+button:focus-visible,
+.remote-hit:focus,
+.remote-hit:hover {
+  box-shadow: 0 0 0 2px #2f7cf6, 0 0 18px rgba(47, 124, 246, 0.35);
+}
+
+.remote-hit {
+  min-height: 48px;
+}
+
+button,
+input,
+textarea {
+  font-family: inherit;
+}
+
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: #2a3446 transparent;
+}
+
+.scroll-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: #2a3446;
+  border-radius: 99px;
+}
+
+.focus-tile {
+  outline: none;
+  box-shadow: 0 0 0 2px #2f7cf6, 0 0 22px rgba(47, 124, 246, 0.35);
+}
+
+.epg-now-line {
+  box-shadow: 0 0 12px rgba(255, 51, 85, 0.55);
+}
+
+@keyframes pulse-live {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.live-dot {
+  animation: pulse-live 1.4s ease-in-out infinite;
+}
+
+@keyframes player-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.player-spinner {
+  width: 46px;
+  height: 46px;
+  border: 3px solid rgba(255, 255, 255, 0.16);
+  border-top-color: #2f7cf6;
+  border-radius: 50%;
+  animation: player-spin 0.7s linear infinite;
+}
