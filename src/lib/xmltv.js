@@ -193,7 +193,7 @@ async function fetchBinary(url) {
   const targets = [preferHttps(url)]
   if (targets[0] !== url) targets.push(url)
 
-  if (window.oneplayer) {
+  if (window.mirefir) {
     for (const target of targets) {
       try {
         const direct = await fetch(target, { cache: 'no-store', redirect: 'follow' })

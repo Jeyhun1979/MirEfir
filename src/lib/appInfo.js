@@ -1,6 +1,6 @@
 export const APP_VERSION = '1.0.0'
 export const GITHUB_OWNER = 'Jeyhun1979'
-export const GITHUB_REPO = 'OnePlayer'
+export const GITHUB_REPO = 'MirEfir'
 
 export function githubReleasesUrl() {
   if (!GITHUB_OWNER) return ''

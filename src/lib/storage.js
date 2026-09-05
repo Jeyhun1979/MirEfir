@@ -9,12 +9,12 @@ export function formatBytes(bytes) {
 }
 
 export function hasElectronStorage() {
-  return Boolean(window.oneplayer?.pickFolder)
+  return Boolean(window.mirefir?.pickFolder)
 }
 
 export async function getInternalFolder() {
-  if (window.oneplayer?.internalFolder) {
-    return window.oneplayer.internalFolder()
+  if (window.mirefir?.internalFolder) {
+    return window.mirefir.internalFolder()
   }
   if (!window.showDirectoryPicker) {
     throw new Error('В браузере выберите папку на диске — или откройте Electron-версию.')
@@ -24,8 +24,8 @@ export async function getInternalFolder() {
 }
 
 export async function pickStorageFolder() {
-  if (window.oneplayer?.pickFolder) {
-    const result = await window.oneplayer.pickFolder()
+  if (window.mirefir?.pickFolder) {
+    const result = await window.mirefir.pickFolder()
     if (!result?.path) return null
     if (result.freeBytes && result.freeBytes < MIN_FREE) {
       throw new Error(`На носителе мало места (${formatBytes(result.freeBytes)}). Выберите другой диск или флешку.`)
@@ -42,9 +42,9 @@ export async function pickStorageFolder() {
 }
 
 export async function appendChunk(folderPath, fileName, buffer) {
-  if (window.oneplayer?.writeChunk) {
+  if (window.mirefir?.writeChunk) {
     const filePath = `${folderPath.replace(/[\\/]$/, '')}\\${fileName}`.replace(/\//g, '\\')
-    await window.oneplayer.writeChunk(filePath, buffer)
+    await window.mirefir.writeChunk(filePath, buffer)
     return filePath
   }
 
@@ -59,8 +59,8 @@ export async function appendChunk(folderPath, fileName, buffer) {
 }
 
 export async function listStoredRecordings(folderPath) {
-  if (window.oneplayer?.listRecordings && folderPath) {
-    return window.oneplayer.listRecordings(folderPath)
+  if (window.mirefir?.listRecordings && folderPath) {
+    return window.mirefir.listRecordings(folderPath)
   }
   if (!browserDirHandle) return []
   const items = []
@@ -73,8 +73,8 @@ export async function listStoredRecordings(folderPath) {
 }
 
 export async function recordingPlayUrl(filePath) {
-  if (window.oneplayer?.fileUrl) {
-    const href = await window.oneplayer.fileUrl(filePath)
+  if (window.mirefir?.fileUrl) {
+    const href = await window.mirefir.fileUrl(filePath)
     if (href) return href
   }
   const buffer = await readStoredFile(filePath)
@@ -82,8 +82,8 @@ export async function recordingPlayUrl(filePath) {
 }
 
 export async function readStoredFile(filePath) {
-  if (window.oneplayer?.readFile) {
-    const buf = await window.oneplayer.readFile(filePath)
+  if (window.mirefir?.readFile) {
+    const buf = await window.mirefir.readFile(filePath)
     return buf instanceof ArrayBuffer ? buf : buf.buffer
   }
   if (!browserDirHandle) throw new Error('Нет доступа к носителю')

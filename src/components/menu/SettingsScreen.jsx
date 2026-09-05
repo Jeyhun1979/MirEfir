@@ -634,7 +634,7 @@ export function SettingsScreen() {
 
         {settingsTab === 'about' ? (
           <div className="space-y-3 text-sm text-white/60">
-            <div className="text-xl text-white">OnePlayer</div>
+            <div className="text-xl text-white">MirEfir</div>
             <p>IPTV-плеер: плейлисты, телепрограмма, архив, пульт и резервные копии.</p>
             <p>Версия 1.0.0</p>
           </div>

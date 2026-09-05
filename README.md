@@ -1,14 +1,14 @@
-# OnePlayer
+# MirEfir
 
-IPTV-плеер для Windows и Android. Плейлист задаёте сами: ссылка или файл M3U. Телепрограмму можно добавить позже.
+IPTV-плеер для Windows, Linux и Android. Плейлист задаёте сами: ссылка или файл M3U. Телепрограмму можно добавить позже.
 
 ## Скачать
 
-Готовые сборки — в [Releases](https://github.com/Jeyhun1979/OnePlayer/releases).
+Готовые сборки — в [Releases](https://github.com/Jeyhun1979/MirEfir/releases).
 
-- Windows: `OnePlayer-*-windows.exe` (без установки)
-- Linux: `OnePlayer-*-linux-x64.tar.gz` — распаковать и запустить `OnePlayer`
-- Android: APK позже
+- Windows: `MirEfir-*-windows.exe` (без установки)
+- Linux: `MirEfir-*-linux-x64.tar.gz` — распаковать и запустить `MirEfir`
+- Android: `MirEfir-*.apk`
 - macOS: сборка только с Mac, в этом релизе нет
 
 При запуске новой версии плеер предложит **Обновить** или **Пропустить**.

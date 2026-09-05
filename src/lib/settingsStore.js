@@ -1,4 +1,4 @@
-export const SETTINGS_KEY = 'oneplayer.settings'
+export const SETTINGS_KEY = 'mirefir.settings'
 export const BACKUP_VERSION = 1
 
 export const ARCHIVE_DAYS = [1, 3, 5, 7, 14]
@@ -34,7 +34,7 @@ export const DEFAULT_SETTINGS = {
   hiddenGroups: [],
   playlistUpdateHours: 6,
   epgUpdateHours: 6,
-  userAgent: 'OnePlayer/1.0',
+  userAgent: 'MirEfir/1.0',
   decoder: 'auto',
   bufferSec: 15,
   aspect: 'auto',
@@ -61,8 +61,19 @@ export const DEFAULT_SETTINGS = {
   },
 }
 
+function migrateLegacyStorage() {
+  if (localStorage.getItem('mirefir.migrated')) return
+  for (const name of ['settings', 'favorites', 'volume', 'muted', 'playlistUrl', 'epgUrl', 'recordings', 'skipVersion']) {
+    const next = `mirefir.${name}`
+    const prev = localStorage.getItem(`oneplayer.${name}`)
+    if (prev != null && localStorage.getItem(next) == null) localStorage.setItem(next, prev)
+  }
+  localStorage.setItem('mirefir.migrated', '1')
+}
+
 export function loadSettings() {
   try {
+    migrateLegacyStorage()
     const raw = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null')
     if (!raw || typeof raw !== 'object') return { ...DEFAULT_SETTINGS }
     return {
@@ -89,11 +100,11 @@ export function buildBackup(extra = {}) {
     version: BACKUP_VERSION,
     createdAt: new Date().toISOString(),
     settings: loadSettings(),
-    favorites: JSON.parse(localStorage.getItem('oneplayer.favorites') || '[]'),
-    volume: localStorage.getItem('oneplayer.volume'),
-    muted: localStorage.getItem('oneplayer.muted'),
-    playlistUrl: localStorage.getItem('oneplayer.playlistUrl'),
-    epgUrl: localStorage.getItem('oneplayer.epgUrl'),
+    favorites: JSON.parse(localStorage.getItem('mirefir.favorites') || '[]'),
+    volume: localStorage.getItem('mirefir.volume'),
+    muted: localStorage.getItem('mirefir.muted'),
+    playlistUrl: localStorage.getItem('mirefir.playlistUrl'),
+    epgUrl: localStorage.getItem('mirefir.epgUrl'),
     ...extra,
   }
 }
@@ -101,11 +112,11 @@ export function buildBackup(extra = {}) {
 export function applyBackup(data) {
   if (!data || typeof data !== 'object') throw new Error('Файл резервной копии повреждён')
   if (data.settings) saveSettings({ ...DEFAULT_SETTINGS, ...data.settings, keys: { ...DEFAULT_SETTINGS.keys, ...(data.settings.keys || {}) } })
-  if (data.favorites) localStorage.setItem('oneplayer.favorites', JSON.stringify(data.favorites))
-  if (data.volume != null) localStorage.setItem('oneplayer.volume', String(data.volume))
-  if (data.muted != null) localStorage.setItem('oneplayer.muted', String(data.muted))
-  if (data.playlistUrl) localStorage.setItem('oneplayer.playlistUrl', data.playlistUrl)
-  if (data.epgUrl) localStorage.setItem('oneplayer.epgUrl', data.epgUrl)
+  if (data.favorites) localStorage.setItem('mirefir.favorites', JSON.stringify(data.favorites))
+  if (data.volume != null) localStorage.setItem('mirefir.volume', String(data.volume))
+  if (data.muted != null) localStorage.setItem('mirefir.muted', String(data.muted))
+  if (data.playlistUrl) localStorage.setItem('mirefir.playlistUrl', data.playlistUrl)
+  if (data.epgUrl) localStorage.setItem('mirefir.epgUrl', data.epgUrl)
 }
 
 export const CLOCK_POSITIONS = [

@@ -14,7 +14,7 @@ async function proxyRemote(req, res, asText) {
     const remote = await fetch(target, {
       redirect: 'follow',
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) OnePlayer/1.0',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) MirEfir/1.0',
         Accept: '*/*',
       },
     })

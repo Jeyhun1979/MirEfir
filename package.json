@@ -1,8 +1,8 @@
 {
-  "name": "oneplayer",
+  "name": "mirefir",
   "private": true,
   "version": "1.0.0",
-  "author": "OnePlayer",
+  "author": "MirEfir",
   "description": "IPTV player for Windows, Linux and Android",
   "main": "electron/main.cjs",
   "type": "module",
@@ -37,10 +37,10 @@
     "wait-on": "^8.0.5"
   },
   "build": {
-    "appId": "com.oneplayer.app",
-    "productName": "OnePlayer",
+    "appId": "com.mirefir.app",
+    "productName": "MirEfir",
     "directories": {
-      "output": "C:/Users/Sasha/OnePlayer-release"
+      "output": "C:/Users/Sasha/MirEfir-release"
     },
     "files": [
       "dist/**/*",

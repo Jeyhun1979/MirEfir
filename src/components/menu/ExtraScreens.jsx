@@ -5,7 +5,7 @@ import { usePlayer } from '../../store/PlayerContext.jsx'
 
 function readLocalRecordings() {
   try {
-    return JSON.parse(localStorage.getItem('oneplayer.recordings') || '[]')
+    return JSON.parse(localStorage.getItem('mirefir.recordings') || '[]')
   } catch {
     return []
   }

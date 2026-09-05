@@ -1,6 +1,6 @@
 {
-  "appId": "com.oneplayer.app",
-  "appName": "OnePlayer",
+  "appId": "com.mirefir.app",
+  "appName": "MirEfir",
   "webDir": "dist",
   "server": {
     "androidScheme": "https",

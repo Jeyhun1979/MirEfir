@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { appendChunk, getInternalFolder, listStoredRecordings, pickStorageFolder, safeFileName } from '../lib/storage.js'
 
-const META_KEY = 'oneplayer.recordings'
+const META_KEY = 'mirefir.recordings'
 
 function readMeta() {
   try {

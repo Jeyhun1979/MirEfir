@@ -61,8 +61,8 @@ export function VideoPlayer({ fullscreen = false }) {
 
   useEffect(() => {
     const onPad = () => showPad()
-    window.addEventListener('oneplayer:pad', onPad)
-    return () => window.removeEventListener('oneplayer:pad', onPad)
+    window.addEventListener('mirefir:pad', onPad)
+    return () => window.removeEventListener('mirefir:pad', onPad)
   }, [])
 
   useEffect(() => {

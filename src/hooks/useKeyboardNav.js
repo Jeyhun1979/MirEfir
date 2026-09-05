@@ -137,7 +137,7 @@ export function useKeyboardNav() {
         event.preventDefault()
         if (!selectedChannel) return
         if (isFullscreen) {
-          window.dispatchEvent(new Event('oneplayer:pad'))
+          window.dispatchEvent(new Event('mirefir:pad'))
           return
         }
         setIsFullscreen(true)

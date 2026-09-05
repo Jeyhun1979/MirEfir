@@ -6,12 +6,12 @@ import { decodeCloudCode, encodeCloudCode } from '../lib/cloudCode.js'
 import { applyBackup, buildBackup, loadSettings, saveSettings } from '../lib/settingsStore.js'
 
 const PlayerContext = createContext(null)
-const FAVORITES_KEY = 'oneplayer.favorites'
-const VOLUME_KEY = 'oneplayer.volume'
-const MUTE_KEY = 'oneplayer.muted'
+const FAVORITES_KEY = 'mirefir.favorites'
+const VOLUME_KEY = 'mirefir.volume'
+const MUTE_KEY = 'mirefir.muted'
 const VOLUME_STEP = 0.05
-const PLAYLIST_URL_KEY = 'oneplayer.playlistUrl'
-const EPG_URL_KEY = 'oneplayer.epgUrl'
+const PLAYLIST_URL_KEY = 'mirefir.playlistUrl'
+const EPG_URL_KEY = 'mirefir.epgUrl'
 
 function readPlaylistUrl() {
   return localStorage.getItem(PLAYLIST_URL_KEY) || ''
@@ -349,7 +349,7 @@ export function PlayerProvider({ children }) {
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' })
     const link = document.createElement('a')
     link.href = URL.createObjectURL(blob)
-    link.download = `oneplayer-backup-${new Date().toISOString().slice(0, 10)}.json`
+    link.download = `mirefir-backup-${new Date().toISOString().slice(0, 10)}.json`
     link.click()
     URL.revokeObjectURL(link.href)
   }, [favorites, settings])

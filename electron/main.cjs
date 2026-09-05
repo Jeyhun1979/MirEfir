@@ -12,7 +12,7 @@ function createWindow() {
     minWidth: 1100,
     minHeight: 700,
     backgroundColor: '#06070a',
-    title: 'OnePlayer',
+    title: 'MirEfir',
     autoHideMenuBar: true,
     show: false,
     webPreferences: {
@@ -36,7 +36,7 @@ app.whenReady().then(() => {
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
     const headers = { ...details.requestHeaders }
     if (!headers['User-Agent'] && !headers['user-agent']) {
-      headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) OnePlayer/1.0'
+      headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) MirEfir/1.0'
     }
     callback({ requestHeaders: headers })
   })
@@ -53,7 +53,7 @@ app.on('window-all-closed', () => {
 })
 
 ipcMain.handle('storage:internal-folder', async () => {
-  const folder = path.join(app.getPath('videos'), 'OnePlayer')
+  const folder = path.join(app.getPath('videos'), 'MirEfir')
   fs.mkdirSync(folder, { recursive: true })
   let freeBytes = 0
   try {

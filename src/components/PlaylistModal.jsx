@@ -50,8 +50,8 @@ export function PlaylistModal() {
   }
 
   const openNative = async () => {
-    if (window.oneplayer?.openPlaylistFile) {
-      const result = await window.oneplayer.openPlaylistFile()
+    if (window.mirefir?.openPlaylistFile) {
+      const result = await window.mirefir.openPlaylistFile()
       if (result?.content) {
         await run(async () => {
           await importFromText(result.content, result.name)
@@ -69,7 +69,7 @@ export function PlaylistModal() {
         className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#10151e] p-5 shadow-2xl"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="mb-2 text-lg font-semibold">{needsSetup ? 'Добро пожаловать в OnePlayer' : 'Плейлист и телепрограмма'}</div>
+        <div className="mb-2 text-lg font-semibold">{needsSetup ? 'Добро пожаловать в MirEfir' : 'Плейлист и телепрограмма'}</div>
         <p className="mb-4 text-sm text-white/50">
           Нужен плейлист: ссылка или файл M3U. Телепрограмму (XMLTV) можно указать сейчас или добавить позже в настройках.
         </p>

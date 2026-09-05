@@ -11,7 +11,7 @@ export function TopBar() {
       <div className="flex items-center gap-3">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-sm font-bold">▶</div>
         <div>
-          <div className="text-[15px] font-semibold tracking-wide">ONEPLAYER</div>
+          <div className="text-[15px] font-semibold tracking-wide">MIREFIR</div>
           <div className="text-[11px] text-white/45">IPTV-плеер</div>
         </div>
       </div>

@@ -1,4 +1,4 @@
-package com.oneplayer.app;
+package com.mirefir.app;
 
 import com.getcapacitor.BridgeActivity;
 

@@ -25,7 +25,7 @@ export function UpdateDialog() {
             className="rounded-xl bg-accent px-4 py-2 text-sm"
             onClick={() => {
               const href = update.downloadUrl || update.pageUrl
-              if (window.oneplayer?.openExternal) window.oneplayer.openExternal(href)
+              if (window.mirefir?.openExternal) window.mirefir.openExternal(href)
               else window.open(href, '_blank')
             }}
           >

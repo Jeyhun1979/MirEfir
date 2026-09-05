@@ -21,14 +21,14 @@ export function encodeCloudCode({ favoriteNames = [], playlists = [], epgUrl = '
     p: playlists.map((item) => (typeof item === 'string' ? item : item.url)).filter(Boolean),
     e: epgUrl || '',
   }
-  return `OP1.${toBase64(JSON.stringify(payload))}`
+  return `ME1.${toBase64(JSON.stringify(payload))}`
 }
 
 export async function shareCloudCode(code) {
-  const text = `OnePlayer — код настроек и избранного:\n${code}`
+  const text = `MirEfir — код настроек и избранного:\n${code}`
   if (navigator.share) {
     try {
-      await navigator.share({ title: 'OnePlayer', text })
+      await navigator.share({ title: 'MirEfir', text })
       return 'shared'
     } catch (err) {
       if (err.name === 'AbortError') return 'cancel'
@@ -44,7 +44,7 @@ export async function shareCloudCode(code) {
 export function decodeCloudCode(raw) {
   const code = String(raw || '').trim().replace(/\s+/g, '')
   if (!code) throw new Error('Вставьте код')
-  const body = code.startsWith('OP1.') ? code.slice(4) : code
+  const body = code.startsWith('ME1.') || code.startsWith('OP1.') ? code.slice(4) : code
   let data
   try {
     data = JSON.parse(fromBase64(body))

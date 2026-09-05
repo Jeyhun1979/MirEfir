@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">OnePlayer</string>
-    <string name="title_activity_main">OnePlayer</string>
-    <string name="package_name">com.oneplayer.app</string>
-    <string name="custom_url_scheme">com.oneplayer.app</string>
+    <string name="app_name">MirEfir</string>
+    <string name="title_activity_main">MirEfir</string>
+    <string name="package_name">com.mirefir.app</string>
+    <string name="custom_url_scheme">com.mirefir.app</string>
 </resources>

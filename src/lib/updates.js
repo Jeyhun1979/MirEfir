@@ -1,6 +1,6 @@
 import { APP_VERSION, githubLatestApi, githubReleasesUrl } from './appInfo.js'
 
-const SKIP_KEY = 'oneplayer.skipVersion'
+const SKIP_KEY = 'mirefir.skipVersion'
 
 function parseVersion(value) {
   return String(value || '')

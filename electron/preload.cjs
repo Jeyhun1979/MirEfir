@@ -1,6 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
-contextBridge.exposeInMainWorld('oneplayer', {
+contextBridge.exposeInMainWorld('mirefir', {
   platform: 'electron',
   openPlaylistFile: () => ipcRenderer.invoke('playlist:open-file'),
   openExternal: (href) => ipcRenderer.invoke('shell:open-external', href),
