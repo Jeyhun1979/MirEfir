@@ -16,7 +16,7 @@ export function UpdateDialog() {
       <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#10151e] p-5">
         <div className="mb-1 text-lg font-semibold">Доступна новая версия</div>
         <p className="mb-4 text-sm text-white/50">
-          Сейчас {APP_VERSION}, вышла {update.version}. Можно скачать обновление или пропустить.
+          Сейчас {APP_VERSION}, вышла {update.version}. Плейлист, телепрограмма и настройки останутся. Можно скачать обновление или пропустить.
         </p>
         {update.notes ? <p className="mb-4 max-h-28 overflow-y-auto text-xs text-white/40">{update.notes}</p> : null}
         <div className="flex gap-2">

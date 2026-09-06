@@ -93,6 +93,36 @@ export function loadSettings() {
 
 export function saveSettings(settings) {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))
+  queuePersistFile()
+}
+
+let persistTimer = 0
+
+export function queuePersistFile() {
+  if (typeof window === 'undefined' || !window.mirefir?.savePersist) return
+  window.clearTimeout(persistTimer)
+  persistTimer = window.setTimeout(() => {
+    window.mirefir.savePersist(buildBackup()).catch(() => {})
+  }, 250)
+}
+
+export async function restorePersistFile() {
+  if (typeof window === 'undefined' || !window.mirefir?.loadPersist) return false
+  if (
+    localStorage.getItem(SETTINGS_KEY) ||
+    localStorage.getItem('mirefir.playlistUrl') ||
+    localStorage.getItem('mirefir.playlistText')
+  ) {
+    return false
+  }
+  try {
+    const data = await window.mirefir.loadPersist()
+    if (!data) return false
+    applyBackup(data)
+    return true
+  } catch {
+    return false
+  }
 }
 
 export function buildBackup(extra = {}) {
@@ -104,6 +134,7 @@ export function buildBackup(extra = {}) {
     volume: localStorage.getItem('mirefir.volume'),
     muted: localStorage.getItem('mirefir.muted'),
     playlistUrl: localStorage.getItem('mirefir.playlistUrl'),
+    playlistText: localStorage.getItem('mirefir.playlistText'),
     epgUrl: localStorage.getItem('mirefir.epgUrl'),
     ...extra,
   }
@@ -111,12 +142,23 @@ export function buildBackup(extra = {}) {
 
 export function applyBackup(data) {
   if (!data || typeof data !== 'object') throw new Error('Файл резервной копии повреждён')
-  if (data.settings) saveSettings({ ...DEFAULT_SETTINGS, ...data.settings, keys: { ...DEFAULT_SETTINGS.keys, ...(data.settings.keys || {}) } })
+  if (data.settings) {
+    localStorage.setItem(
+      SETTINGS_KEY,
+      JSON.stringify({
+        ...DEFAULT_SETTINGS,
+        ...data.settings,
+        keys: { ...DEFAULT_SETTINGS.keys, ...(data.settings.keys || {}) },
+      }),
+    )
+  }
   if (data.favorites) localStorage.setItem('mirefir.favorites', JSON.stringify(data.favorites))
   if (data.volume != null) localStorage.setItem('mirefir.volume', String(data.volume))
   if (data.muted != null) localStorage.setItem('mirefir.muted', String(data.muted))
   if (data.playlistUrl) localStorage.setItem('mirefir.playlistUrl', data.playlistUrl)
+  if (data.playlistText) localStorage.setItem('mirefir.playlistText', data.playlistText)
   if (data.epgUrl) localStorage.setItem('mirefir.epgUrl', data.epgUrl)
+  queuePersistFile()
 }
 
 export const CLOCK_POSITIONS = [

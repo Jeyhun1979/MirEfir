@@ -4,11 +4,29 @@ const fs = require('fs')
 const { pathToFileURL } = require('url')
 
 const DEV_URL = 'http://127.0.0.1:5173'
+const CONFIG_NAME = 'mirefir-config.json'
 
-const portableDir = process.env.PORTABLE_EXECUTABLE_DIR
-if (portableDir) {
-  app.setPath('userData', path.join(portableDir, 'MirEfir-data'))
+function profileHasData(dir) {
+  if (!dir || !fs.existsSync(dir)) return false
+  return fs.existsSync(path.join(dir, 'Local Storage')) || fs.existsSync(path.join(dir, CONFIG_NAME))
 }
+
+function configPath() {
+  return path.join(app.getPath('userData'), CONFIG_NAME)
+}
+
+const stableUserData = path.join(app.getPath('appData'), 'MirEfir')
+const portableDir = process.env.PORTABLE_EXECUTABLE_DIR
+const besidePortable = portableDir ? path.join(portableDir, 'MirEfir-data') : ''
+if (portableDir && profileHasData(besidePortable) && !profileHasData(stableUserData)) {
+  try {
+    fs.mkdirSync(stableUserData, { recursive: true })
+    fs.cpSync(besidePortable, stableUserData, { recursive: true, force: false })
+  } catch {
+    /* keep going with empty or partial profile */
+  }
+}
+app.setPath('userData', stableUserData)
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
@@ -136,6 +154,21 @@ ipcMain.handle('shell:open-external', async (_event, href) => {
 
 ipcMain.handle('app:quit', () => {
   app.quit()
+})
+
+ipcMain.handle('config:load', async () => {
+  try {
+    return JSON.parse(fs.readFileSync(configPath(), 'utf8'))
+  } catch {
+    return null
+  }
+})
+
+ipcMain.handle('config:save', async (_event, data) => {
+  if (!data || typeof data !== 'object') return false
+  fs.mkdirSync(app.getPath('userData'), { recursive: true })
+  fs.writeFileSync(configPath(), JSON.stringify(data))
+  return true
 })
 
 ipcMain.handle('playlist:open-file', async () => {

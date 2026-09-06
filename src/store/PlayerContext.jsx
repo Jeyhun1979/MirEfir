@@ -3,7 +3,7 @@ import { getCurrentProgram, getNextProgram } from '../lib/epg.js'
 import { collectGroups, loadPlaylistFromFile, loadPlaylistFromUrl, parseM3U } from '../lib/m3uParser.js'
 import { bindEpgToChannels, loadXmltv } from '../lib/xmltv.js'
 import { decodeCloudCode, encodeCloudCode } from '../lib/cloudCode.js'
-import { applyBackup, buildBackup, loadSettings, saveSettings } from '../lib/settingsStore.js'
+import { applyBackup, buildBackup, loadSettings, queuePersistFile, restorePersistFile, saveSettings } from '../lib/settingsStore.js'
 
 const PlayerContext = createContext(null)
 const FAVORITES_KEY = 'mirefir.favorites'
@@ -200,6 +200,7 @@ export function PlayerProvider({ children }) {
       localStorage.setItem(PLAYLIST_TEXT_KEY, text)
       localStorage.removeItem(PLAYLIST_URL_KEY)
       setPlaylistUrl('')
+      queuePersistFile()
       await applyPlaylist(parsed)
     },
     [applyPlaylist],
@@ -223,6 +224,7 @@ export function PlayerProvider({ children }) {
       localStorage.setItem(PLAYLIST_TEXT_KEY, text)
       localStorage.removeItem(PLAYLIST_URL_KEY)
       setPlaylistUrl('')
+      queuePersistFile()
       await applyPlaylist(parsed)
     },
     [applyPlaylist],
@@ -241,6 +243,7 @@ export function PlayerProvider({ children }) {
       saveSettings(next)
       return next
     })
+    queuePersistFile()
 
     setChannels((current) => {
       const bound = bindEpgToChannels(current, xmltv)
@@ -512,28 +515,38 @@ export function PlayerProvider({ children }) {
         ? current.filter((id) => id !== channelId)
         : [...current, channelId]
       localStorage.setItem(FAVORITES_KEY, JSON.stringify(next))
+      queuePersistFile()
       return next
     })
   }, [])
 
   const bootstrapped = useRef(false)
+  const [bootReady, setBootReady] = useState(false)
 
   useEffect(() => {
     if (bootstrapped.current) return
     bootstrapped.current = true
+    let cancelled = false
 
-    const url = readPlaylistUrl()
-    const savedText = readPlaylistText()
-    if (!url && !savedText) {
-      setStatus('Добавьте плейлист')
-      setIsModalOpen(true)
-      return
-    }
+    const start = async () => {
+      await restorePersistFile()
+      if (cancelled) return
 
-    setStatus('Загрузка плейлиста…')
-    const load = url ? loadPlaylistFromUrl(url) : Promise.resolve(parseM3U(savedText, 'Плейлист'))
-    load
-      .then(async (parsed) => {
+      const url = readPlaylistUrl()
+      const savedText = readPlaylistText()
+      setPlaylistUrl(url)
+      setEpgUrl(readEpgUrl() || loadSettings().epgUrl)
+      setSettingsState(loadSettings())
+      setBootReady(true)
+      if (!url && !savedText) {
+        setStatus('Добавьте плейлист')
+        setIsModalOpen(true)
+        return
+      }
+
+      setStatus('Загрузка плейлиста…')
+      try {
+        const parsed = url ? await loadPlaylistFromUrl(url) : parseM3U(savedText, 'Плейлист')
         await applyPlaylist(parsed)
         const guide = readEpgUrl() || loadSettings().epgUrl
         if (!guide) return
@@ -542,16 +555,20 @@ export function PlayerProvider({ children }) {
         } catch (err) {
           setError(err.message || 'Не удалось загрузить телепрограмму. Её можно добавить позже.')
         }
-      })
-      .catch(() => {
-        setStatus('Добавьте плейлист')
-        setIsModalOpen(true)
-        setError('Не удалось открыть плейлист. Укажите ссылку или файл.')
-      })
+      } catch {
+        setStatus('Плейлист сохранён, повторная загрузка не удалась')
+        setError('Не удалось открыть плейлист. Ссылка или файл уже сохранены — повторите позже, вводить заново не нужно.')
+      }
+    }
+
+    start()
+    return () => {
+      cancelled = true
+    }
   }, [applyPlaylist, importEpg])
 
   const value = {
-    needsSetup: channels.length === 0 && !hasSavedPlaylist(),
+    needsSetup: bootReady && channels.length === 0 && !hasSavedPlaylist(),
     playlistName,
     playlistUrl,
     epgUrl,

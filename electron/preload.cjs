@@ -13,4 +13,6 @@ contextBridge.exposeInMainWorld('mirefir', {
   listRecordings: (folder) => ipcRenderer.invoke('storage:list-files', folder),
   fileUrl: (filePath) => ipcRenderer.invoke('storage:file-url', filePath),
   quit: () => ipcRenderer.invoke('app:quit'),
+  loadPersist: () => ipcRenderer.invoke('config:load'),
+  savePersist: (data) => ipcRenderer.invoke('config:save', data),
 })
