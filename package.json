@@ -51,7 +51,9 @@
         "nsis",
         "portable"
       ],
-      "artifactName": "${productName}-${version}-windows.${ext}"
+      "artifactName": "${productName}-${version}-windows.${ext}",
+      "signAndEditExecutable": false,
+      "forceCodeSigning": false
     },
     "nsis": {
       "oneClick": false,
