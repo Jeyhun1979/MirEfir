@@ -12,4 +12,5 @@ contextBridge.exposeInMainWorld('mirefir', {
   readFile: (filePath) => ipcRenderer.invoke('storage:read-file', filePath),
   listRecordings: (folder) => ipcRenderer.invoke('storage:list-files', folder),
   fileUrl: (filePath) => ipcRenderer.invoke('storage:file-url', filePath),
+  quit: () => ipcRenderer.invoke('app:quit'),
 })

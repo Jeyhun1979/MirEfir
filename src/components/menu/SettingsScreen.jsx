@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { shareCloudCode } from '../../lib/cloudCode.js'
+import { APP_VERSION } from '../../lib/appInfo.js'
+import { copyText, shareCloudCode } from '../../lib/cloudCode.js'
 import { eventToken, keyCaption } from '../../lib/remoteKeys.js'
 import { ARCHIVE_DAYS, CLOCK_POSITIONS, CLOCK_SIZES, DEFAULT_SETTINGS, KEY_LABELS, saveSettings } from '../../lib/settingsStore.js'
 import { pickStorageFolder } from '../../lib/storage.js'
@@ -540,13 +541,13 @@ export function SettingsScreen() {
             <div className="mb-4 rounded-xl border border-white/10 bg-black/20 p-3">
               <div className="mb-1 text-sm">Облачный код</div>
               <p className="mb-3 text-xs text-white/40">
-                Короткий Base64: избранное и ссылки на плейлисты. Скопируйте или отправьте в мессенджер, на другом устройстве вставьте сюда.
+                Код работает в обе стороны: Windows ↔ Android. В нём избранное и ссылки на плейлист и телепрограмму. Локальный файл M3U так не передаётся — нужен URL. Скопируйте или отправьте в мессенджер и вставьте на другом устройстве.
               </p>
               <textarea
                 value={cloudCode}
                 onChange={(event) => setCloudCode(event.target.value)}
                 rows={3}
-                placeholder="OP1.…"
+                placeholder="ME1.…"
                 className="mb-2 w-full rounded-lg border border-white/10 bg-black/30 px-2 py-2 font-mono text-xs outline-none"
               />
               <div className="flex flex-wrap gap-2">
@@ -557,10 +558,10 @@ export function SettingsScreen() {
                     const code = exportCloudCode()
                     setCloudCode(code)
                     try {
-                      await navigator.clipboard.writeText(code)
-                      setCloudNote('Код скопирован')
+                      await copyText(code)
+                      setCloudNote('Код скопирован. Вставьте его в приложении на другом устройстве.')
                     } catch {
-                      setCloudNote('Скопируйте код вручную')
+                      setCloudNote('Не удалось скопировать автоматически — выделите код и скопируйте вручную')
                     }
                   }}
                 >
@@ -636,7 +637,7 @@ export function SettingsScreen() {
           <div className="space-y-3 text-sm text-white/60">
             <div className="text-xl text-white">MirEfir</div>
             <p>IPTV-плеер: плейлисты, телепрограмма, архив, пульт и резервные копии.</p>
-            <p>Версия 1.0.0</p>
+            <p>Версия {APP_VERSION}</p>
           </div>
         ) : null}
       </section>

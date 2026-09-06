@@ -24,6 +24,37 @@ export function encodeCloudCode({ favoriteNames = [], playlists = [], epgUrl = '
   return `ME1.${toBase64(JSON.stringify(payload))}`
 }
 
+export function copyText(text) {
+  return new Promise((resolve, reject) => {
+    const fallback = () => {
+      const el = document.createElement('textarea')
+      el.value = text
+      el.setAttribute('readonly', '')
+      el.style.position = 'fixed'
+      el.style.left = '-9999px'
+      document.body.appendChild(el)
+      el.focus()
+      el.select()
+      el.setSelectionRange(0, text.length)
+      let ok = false
+      try {
+        ok = document.execCommand('copy')
+      } catch {
+        ok = false
+      }
+      document.body.removeChild(el)
+      if (ok) resolve('copied')
+      else reject(new Error('Не удалось скопировать. Выделите код и скопируйте вручную.'))
+    }
+
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(() => resolve('copied')).catch(fallback)
+      return
+    }
+    fallback()
+  })
+}
+
 export async function shareCloudCode(code) {
   const text = `MirEfir — код настроек и избранного:\n${code}`
   if (navigator.share) {
@@ -34,11 +65,8 @@ export async function shareCloudCode(code) {
       if (err.name === 'AbortError') return 'cancel'
     }
   }
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(code)
-    return 'copied'
-  }
-  throw new Error('Поделиться недоступно на этом устройстве')
+  await copyText(code)
+  return 'copied'
 }
 
 export function decodeCloudCode(raw) {

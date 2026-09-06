@@ -49,13 +49,19 @@ export function PlaylistModal() {
     }
   }
 
+  const loadGuideLater = (value) => {
+    const next = value.trim()
+    if (!next) return
+    importEpg(next).catch((err) => setError(err.message || 'Не удалось загрузить телепрограмму'))
+  }
+
   const openNative = async () => {
     if (window.mirefir?.openPlaylistFile) {
       const result = await window.mirefir.openPlaylistFile()
       if (result?.content) {
         await run(async () => {
           await importFromText(result.content, result.name)
-          if (guide.trim()) await importEpg(guide.trim())
+          loadGuideLater(guide)
         })
       }
       return
@@ -98,7 +104,7 @@ export function PlaylistModal() {
             onClick={() =>
               run(async () => {
                 await importFromUrl(url.trim())
-                if (guide.trim()) await importEpg(guide.trim())
+                loadGuideLater(guide)
               })
             }
             className="rounded-xl bg-accent px-4 py-2 text-sm font-medium disabled:opacity-40"
@@ -130,7 +136,7 @@ export function PlaylistModal() {
             if (!file) return
             run(async () => {
               await importFromFile(file)
-              if (guide.trim()) await importEpg(guide.trim())
+              loadGuideLater(guide)
             })
           }}
         />

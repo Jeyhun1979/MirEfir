@@ -11,7 +11,10 @@ function parseVersion(value) {
 
 function pickDownload(assets) {
   const ua = navigator.userAgent
-  if (/Linux/i.test(ua) && !/Android/i.test(ua)) {
+  if (/Android/i.test(ua)) {
+    return assets.find((item) => /\.apk$/i.test(item.name))
+  }
+  if (/Linux/i.test(ua)) {
     return assets.find((item) => /\.AppImage$/i.test(item.name)) || assets.find((item) => /\.tar\.gz$/i.test(item.name))
   }
   if (/Mac/i.test(ua)) {

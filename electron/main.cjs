@@ -5,6 +5,13 @@ const { pathToFileURL } = require('url')
 
 const DEV_URL = 'http://127.0.0.1:5173'
 
+const portableDir = process.env.PORTABLE_EXECUTABLE_DIR
+if (portableDir) {
+  app.setPath('userData', path.join(portableDir, 'MirEfir-data'))
+}
+
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1680,
@@ -125,6 +132,10 @@ ipcMain.handle('shell:open-external', async (_event, href) => {
   if (typeof href === 'string' && /^https?:\/\//i.test(href)) {
     await shell.openExternal(href)
   }
+})
+
+ipcMain.handle('app:quit', () => {
+  app.quit()
 })
 
 ipcMain.handle('playlist:open-file', async () => {

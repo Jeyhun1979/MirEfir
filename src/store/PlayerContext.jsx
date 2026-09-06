@@ -11,10 +11,23 @@ const VOLUME_KEY = 'mirefir.volume'
 const MUTE_KEY = 'mirefir.muted'
 const VOLUME_STEP = 0.05
 const PLAYLIST_URL_KEY = 'mirefir.playlistUrl'
+const PLAYLIST_TEXT_KEY = 'mirefir.playlistText'
 const EPG_URL_KEY = 'mirefir.epgUrl'
 
 function readPlaylistUrl() {
-  return localStorage.getItem(PLAYLIST_URL_KEY) || ''
+  return (
+    localStorage.getItem(PLAYLIST_URL_KEY) ||
+    loadSettings().playlists?.find((item) => item.url)?.url ||
+    ''
+  )
+}
+
+function readPlaylistText() {
+  return localStorage.getItem(PLAYLIST_TEXT_KEY) || ''
+}
+
+function hasSavedPlaylist() {
+  return Boolean(readPlaylistUrl() || readPlaylistText())
 }
 
 function readEpgUrl() {
@@ -22,9 +35,17 @@ function readEpgUrl() {
 }
 
 function readVolume() {
-  const value = Number(localStorage.getItem(VOLUME_KEY))
-  if (!Number.isFinite(value)) return 0.8
-  return Math.min(1, Math.max(0, value))
+  const raw = localStorage.getItem(VOLUME_KEY)
+  const value = Number(raw)
+  if (!localStorage.getItem('mirefir.volumeV2')) {
+    localStorage.setItem('mirefir.volumeV2', '1')
+    if (!raw || value === 0.8) {
+      localStorage.setItem(VOLUME_KEY, '0.2')
+      return 0.2
+    }
+  }
+  if (!Number.isFinite(value) || value <= 0) return 0.2
+  return Math.min(1, Math.max(0.05, value))
 }
 
 function readFavorites() {
@@ -52,7 +73,7 @@ export function PlayerProvider({ children }) {
   const [status, setStatus] = useState('Добавьте плейлист')
   const [error, setError] = useState('')
   const [volume, setVolume] = useState(readVolume)
-  const [muted, setMuted] = useState(() => localStorage.getItem(MUTE_KEY) === '1')
+  const [muted, setMuted] = useState(false)
   const [volumeTick, setVolumeTick] = useState(0)
   const [settings, setSettingsState] = useState(loadSettings)
   const [uiScreen, setUiScreen] = useState(null)
@@ -69,6 +90,8 @@ export function PlayerProvider({ children }) {
   }, [liveGuideView])
   const [voiceArmed, setVoiceArmed] = useState(false)
   const [pipPulse, setPipPulse] = useState(0)
+  const [exitPrompt, setExitPrompt] = useState(false)
+  const [menuResumeGuide, setMenuResumeGuide] = useState(false)
 
   const playlistGroups = useMemo(() => {
     const hidden = settings.hiddenGroups || []
@@ -156,9 +179,27 @@ export function PlayerProvider({ children }) {
     }
   }, [])
 
+  const persistPlaylistUrl = useCallback((url) => {
+    localStorage.setItem(PLAYLIST_URL_KEY, url)
+    localStorage.removeItem(PLAYLIST_TEXT_KEY)
+    setPlaylistUrl(url)
+    setSettingsState((current) => {
+      const next = {
+        ...current,
+        playlists: [{ id: 'default', name: 'Основной', url }],
+        activePlaylistId: 'default',
+      }
+      saveSettings(next)
+      return next
+    })
+  }, [])
+
   const importFromText = useCallback(
     async (text, name) => {
       const parsed = parseM3U(text, name)
+      localStorage.setItem(PLAYLIST_TEXT_KEY, text)
+      localStorage.removeItem(PLAYLIST_URL_KEY)
+      setPlaylistUrl('')
       await applyPlaylist(parsed)
     },
     [applyPlaylist],
@@ -168,17 +209,20 @@ export function PlayerProvider({ children }) {
     async (url) => {
       setStatus('Загрузка плейлиста…')
       const parsed = await loadPlaylistFromUrl(url)
-      localStorage.setItem(PLAYLIST_URL_KEY, url)
-      setPlaylistUrl(url)
+      persistPlaylistUrl(url)
       await applyPlaylist(parsed)
       return parsed
     },
-    [applyPlaylist],
+    [applyPlaylist, persistPlaylistUrl],
   )
 
   const importFromFile = useCallback(
     async (file) => {
-      const parsed = await loadPlaylistFromFile(file)
+      const text = await file.text()
+      const parsed = parseM3U(text, file.name)
+      localStorage.setItem(PLAYLIST_TEXT_KEY, text)
+      localStorage.removeItem(PLAYLIST_URL_KEY)
+      setPlaylistUrl('')
       await applyPlaylist(parsed)
     },
     [applyPlaylist],
@@ -192,6 +236,11 @@ export function PlayerProvider({ children }) {
     xmltvRef.current = xmltv
     localStorage.setItem(EPG_URL_KEY, nextUrl)
     setEpgUrl(nextUrl)
+    setSettingsState((current) => {
+      const next = { ...current, epgUrl: nextUrl }
+      saveSettings(next)
+      return next
+    })
 
     setChannels((current) => {
       const bound = bindEpgToChannels(current, xmltv)
@@ -278,9 +327,11 @@ export function PlayerProvider({ children }) {
     })
   }, [])
 
-  const openMenu = useCallback(() => {
-    setLiveGuideOpen(false)
-    setIsFullscreen(false)
+  const openMenu = useCallback((opts) => {
+    const resumeGuide = Boolean(opts && typeof opts === 'object' && opts.resumeGuide)
+    setLiveGuideView(null)
+    setExitPrompt(false)
+    setMenuResumeGuide(resumeGuide)
     setUiScreen('menu')
   }, [])
 
@@ -294,6 +345,8 @@ export function PlayerProvider({ children }) {
     setUiScreen(null)
     setSearchQuery('')
     setVoiceArmed(false)
+    setExitPrompt(false)
+    setMenuResumeGuide(false)
     setLiveGuideOpen(false)
   }, [])
 
@@ -302,6 +355,14 @@ export function PlayerProvider({ children }) {
     const now = Date.now()
     if (now - backLock.current < 250) return 'skip'
     backLock.current = now
+    if (exitPrompt) {
+      setExitPrompt(false)
+      return 'exit-prompt'
+    }
+    if (liveGuideView === 'groups') {
+      setLiveGuideView('categories')
+      return 'guide-groups'
+    }
     if (liveGuideView === 'schedule' || liveGuideView === 'categories') {
       setLiveGuideView('channels')
       return 'guide-layer'
@@ -315,9 +376,16 @@ export function PlayerProvider({ children }) {
       return 'settings'
     }
     if (uiScreen) {
+      if (uiScreen === 'menu' && menuResumeGuide) {
+        setUiScreen(null)
+        setMenuResumeGuide(false)
+        setLiveGuideView('groups')
+        return 'guide-groups'
+      }
       setUiScreen(null)
       setSearchQuery('')
       setVoiceArmed(false)
+      setMenuResumeGuide(false)
       return 'overlay'
     }
     if (isModalOpen) {
@@ -330,7 +398,7 @@ export function PlayerProvider({ children }) {
     }
     setUiScreen('menu')
     return 'menu'
-  }, [isFullscreen, isModalOpen, liveGuideView, uiScreen])
+  }, [exitPrompt, isFullscreen, isModalOpen, liveGuideView, menuResumeGuide, uiScreen])
 
   const requestRecord = useCallback(() => {
     setRecordPulse((value) => value + 1)
@@ -367,12 +435,16 @@ export function PlayerProvider({ children }) {
     const names = favorites
       .map((id) => channels.find((channel) => channel.id === id)?.displayName)
       .filter(Boolean)
+    const urls = [
+      ...(settings.playlists || []).map((item) => (typeof item === 'string' ? item : item.url)),
+      playlistUrl,
+    ].filter(Boolean)
     return encodeCloudCode({
       favoriteNames: names,
-      playlists: settings.playlists,
+      playlists: [...new Set(urls)],
       epgUrl: settings.epgUrl || epgUrl,
     })
-  }, [channels, epgUrl, favorites, settings.epgUrl, settings.playlists])
+  }, [channels, epgUrl, favorites, playlistUrl, settings.epgUrl, settings.playlists])
 
   const importCloudCode = useCallback(
     async (code) => {
@@ -451,17 +523,19 @@ export function PlayerProvider({ children }) {
     bootstrapped.current = true
 
     const url = readPlaylistUrl()
-    if (!url) {
+    const savedText = readPlaylistText()
+    if (!url && !savedText) {
       setStatus('Добавьте плейлист')
       setIsModalOpen(true)
       return
     }
 
     setStatus('Загрузка плейлиста…')
-    loadPlaylistFromUrl(url)
+    const load = url ? loadPlaylistFromUrl(url) : Promise.resolve(parseM3U(savedText, 'Плейлист'))
+    load
       .then(async (parsed) => {
         await applyPlaylist(parsed)
-        const guide = readEpgUrl()
+        const guide = readEpgUrl() || loadSettings().epgUrl
         if (!guide) return
         try {
           await importEpg(guide)
@@ -477,7 +551,7 @@ export function PlayerProvider({ children }) {
   }, [applyPlaylist, importEpg])
 
   const value = {
-    needsSetup: channels.length === 0,
+    needsSetup: channels.length === 0 && !hasSavedPlaylist(),
     playlistName,
     playlistUrl,
     epgUrl,
@@ -512,6 +586,9 @@ export function PlayerProvider({ children }) {
     openSettings,
     closeOverlays,
     goBack,
+    exitPrompt,
+    setExitPrompt,
+    menuResumeGuide,
     updateSettings,
     exportBackup,
     exportCloudCode,

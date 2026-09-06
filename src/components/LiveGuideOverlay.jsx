@@ -70,6 +70,7 @@ export function LiveGuideOverlay() {
     liveGuideView,
     setLiveGuideView,
     setLiveGuideOpen,
+    openMenu,
     channels,
     groups,
     recentIds,
@@ -132,7 +133,7 @@ export function LiveGuideOverlay() {
       nextList.findIndex((channel) => channel.id === selectedChannel?.id),
     )
     setChannelCursor(index)
-    setFocusCol('channels')
+    setFocusCol(liveGuideView === 'groups' ? 'groups' : 'channels')
     requestAnimationFrame(() => {
       const el = channelRef.current
       if (!el) return
@@ -202,15 +203,21 @@ export function LiveGuideOverlay() {
       event.stopPropagation()
 
       if (isBackKey(event)) {
-        if (liveGuideView === 'channels') setLiveGuideView(null)
-        else setLiveGuideView('channels')
+        if (liveGuideView === 'groups') {
+          setLiveGuideView('categories')
+          setFocusCol('channels')
+        } else if (liveGuideView === 'channels') setLiveGuideView(null)
+        else {
+          setLiveGuideView('channels')
+          setFocusCol('channels')
+        }
         return
       }
 
       if (liveGuideView === 'channels') {
         if (dir === 'left' || event.key === settings.keys?.liveGuide) {
           setLiveGuideView('categories')
-          setFocusCol('groups')
+          setFocusCol('channels')
           return
         }
         if (dir === 'right') {
@@ -226,20 +233,28 @@ export function LiveGuideOverlay() {
         return
       }
 
-      if (liveGuideView === 'categories') {
+      if (liveGuideView === 'categories' || liveGuideView === 'groups') {
+        const inGroups = liveGuideView === 'groups' || focusCol === 'groups'
         if (dir === 'left') {
-          if (focusCol === 'channels') setFocusCol('groups')
-          else setLiveGuideView(null)
+          if (!inGroups) {
+            setLiveGuideView('groups')
+            setFocusCol('groups')
+          } else openMenu({ resumeGuide: true })
           return
         }
         if (dir === 'right') {
-          if (focusCol === 'groups') setFocusCol('channels')
-          else setLiveGuideView('channels')
+          if (inGroups) {
+            setLiveGuideView('categories')
+            setFocusCol('channels')
+          } else {
+            setLiveGuideView('channels')
+            setFocusCol('channels')
+          }
           return
         }
         if (dir === 'up' || dir === 'down') {
           const step = dir === 'down' ? 1 : -1
-          if (focusCol === 'groups') {
+          if (inGroups) {
             setGroupCursor((current) => {
               const next = wrapIndex(current + step, groups.length)
               const group = groups[next]
@@ -254,11 +269,12 @@ export function LiveGuideOverlay() {
           return
         }
         if (isOkKey(event)) {
-          if (focusCol === 'groups') {
+          if (inGroups) {
             const group = groups[groupCursor]
             if (group) {
               setGroupId(group.id)
               selectGroup(group.id)
+              setLiveGuideView('categories')
               setFocusCol('channels')
               setChannelCursor(0)
             }
@@ -297,6 +313,7 @@ export function LiveGuideOverlay() {
     groupCursor,
     groups,
     list.length,
+    openMenu,
     liveGuideView,
     selectChannel,
     selectGroup,
@@ -366,13 +383,13 @@ export function LiveGuideOverlay() {
   return (
     <div className="fixed inset-0 z-[45]" onClick={() => setLiveGuideOpen(false)}>
       <div className="flex h-full items-stretch" onClick={(event) => event.stopPropagation()}>
-        {liveGuideView === 'categories' ? (
+        {liveGuideView === 'categories' || liveGuideView === 'groups' ? (
           <aside className="flex w-[min(220px,22vw)] flex-col bg-black/40 backdrop-blur-[2px]">
             <div className="px-4 py-3 text-[15px] font-medium text-sky-300">{activeGroup?.name}</div>
             <div className="scroll-thin flex-1 overflow-y-auto px-2 pb-3">
               {groups.map((group, index) => {
                 const active = group.id === groupId
-                const hovered = focusCol === 'groups' && index === groupCursor
+                const hovered = (liveGuideView === 'groups' || focusCol === 'groups') && index === groupCursor
                 return (
                   <button
                     key={group.id}
@@ -382,6 +399,7 @@ export function LiveGuideOverlay() {
                       setGroupCursor(index)
                       selectGroup(group.id)
                       setChannelCursor(0)
+                      setLiveGuideView('categories')
                       setFocusCol('channels')
                     }}
                     className={`remote-hit mb-0.5 flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-[14px] ${
@@ -397,7 +415,7 @@ export function LiveGuideOverlay() {
           </aside>
         ) : null}
 
-        {liveGuideView === 'categories' || liveGuideView === 'channels' ? (
+        {liveGuideView === 'categories' || liveGuideView === 'groups' || liveGuideView === 'channels' ? (
           <aside className="flex w-[min(400px,36vw)] flex-col bg-black/40 backdrop-blur-[2px]">
             <div className="px-4 py-3 text-[16px] font-medium">{activeGroup?.name || 'Каналы'}</div>
             {renderChannels()}

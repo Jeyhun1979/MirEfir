@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { App as CapApp } from '@capacitor/app'
-import { Capacitor } from '@capacitor/core'
 import { arrowDir, isOkKey } from '../../lib/remoteKeys.js'
+import { quitApp } from '../../lib/quitApp.js'
 import { usePlayer } from '../../store/PlayerContext.jsx'
 
 const ITEMS = [
@@ -21,8 +20,18 @@ const ITEMS = [
 ]
 
 export function MainMenu() {
-  const { uiScreen, closeOverlays, openSettings, setListMode, setUiScreen, setSelectedGroupId, setFocusZone } =
-    usePlayer()
+  const {
+    uiScreen,
+    closeOverlays,
+    openSettings,
+    setListMode,
+    setUiScreen,
+    setSelectedGroupId,
+    setFocusZone,
+    goBack,
+    exitPrompt,
+    setExitPrompt,
+  } = usePlayer()
   const [cursor, setCursor] = useState(0)
   const itemRefs = useRef([])
 
@@ -35,13 +44,25 @@ export function MainMenu() {
   }, [cursor])
 
   useEffect(() => {
-    if (uiScreen !== 'menu') return undefined
+    if (uiScreen !== 'menu' || exitPrompt) return undefined
     const onKey = (event) => {
       const dir = arrowDir(event)
       if (dir === 'up' || dir === 'down') {
         event.preventDefault()
         event.stopPropagation()
         setCursor((current) => (current + (dir === 'down' ? 1 : -1) + ITEMS.length) % ITEMS.length)
+        return
+      }
+      if (dir === 'left') {
+        event.preventDefault()
+        event.stopPropagation()
+        setExitPrompt(true)
+        return
+      }
+      if (dir === 'right') {
+        event.preventDefault()
+        event.stopPropagation()
+        goBack()
         return
       }
       if (isOkKey(event)) {
@@ -52,7 +73,7 @@ export function MainMenu() {
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [cursor, uiScreen])
+  }, [cursor, exitPrompt, goBack, setExitPrompt, uiScreen])
 
   if (uiScreen !== 'menu') return null
 
@@ -117,9 +138,7 @@ export function MainMenu() {
       return
     }
     if (id === 'exit') {
-      if (Capacitor.isNativePlatform()) CapApp.exitApp().catch(() => closeOverlays())
-      else window.close()
-      closeOverlays()
+      quitApp()
     }
   }
 

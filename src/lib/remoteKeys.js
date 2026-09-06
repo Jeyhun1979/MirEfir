@@ -65,11 +65,11 @@ export function channelDelta(event) {
 }
 
 export function arrowDir(event) {
-  const { key, keyCode } = event
-  if (key === 'ArrowUp' || keyCode === 19) return 'up'
-  if (key === 'ArrowDown' || keyCode === 20) return 'down'
-  if (key === 'ArrowLeft' || keyCode === 21) return 'left'
-  if (key === 'ArrowRight' || keyCode === 22) return 'right'
+  const { key, code, keyCode } = event
+  if (key === 'ArrowUp' || key === 'Up' || code === 'ArrowUp' || keyCode === 19) return 'up'
+  if (key === 'ArrowDown' || key === 'Down' || code === 'ArrowDown' || keyCode === 20) return 'down'
+  if (key === 'ArrowLeft' || key === 'Left' || code === 'ArrowLeft' || keyCode === 21) return 'left'
+  if (key === 'ArrowRight' || key === 'Right' || code === 'ArrowRight' || keyCode === 22) return 'right'
   return ''
 }
 

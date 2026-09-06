@@ -12,6 +12,7 @@ import { MultiViewScreen, RecordingsScreen } from './components/menu/ExtraScreen
 import { SettingsScreen } from './components/menu/SettingsScreen.jsx'
 import { Sidebar } from './components/Sidebar.jsx'
 import { TopBar } from './components/TopBar.jsx'
+import { ExitPrompt } from './components/ExitPrompt.jsx'
 import { LiveGuideOverlay } from './components/LiveGuideOverlay.jsx'
 import { VideoPlayer } from './components/VideoPlayer.jsx'
 import { useAirMouse } from './hooks/useAirMouse.js'
@@ -57,6 +58,7 @@ export default function App() {
       <SettingsScreen />
       <SearchOverlay />
       <LiveGuideOverlay />
+      <ExitPrompt />
       <RecordingsScreen />
       <MultiViewScreen />
     </div>

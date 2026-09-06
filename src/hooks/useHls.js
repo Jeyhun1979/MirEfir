@@ -75,7 +75,11 @@ export function useHls(videoRef, src, options = {}) {
 
     const id = ++requestId.current
     const play = () => {
-      video.play().catch(() => {})
+      video.muted = false
+      video.play().catch(() => {
+        video.muted = false
+        video.play().catch(() => {})
+      })
     }
 
     if (!src) {
