@@ -51,8 +51,9 @@ export function isMuteKey(event) {
 }
 
 export function volumeDelta(event) {
-  if (event.key === 'AudioVolumeUp' || event.keyCode === 24 || event.key === '+') return 1
-  if (event.key === 'AudioVolumeDown' || event.keyCode === 25 || event.key === '-') return -1
+  const { key, code, keyCode } = event
+  if (key === 'AudioVolumeUp' || keyCode === 24 || key === '+' || key === '=' || key === 'Add' || code === 'NumpadAdd') return 1
+  if (key === 'AudioVolumeDown' || keyCode === 25 || key === '-' || key === '_' || key === 'Subtract' || code === 'NumpadSubtract') return -1
   return 0
 }
 

@@ -61,7 +61,12 @@ export function PlayerProvider({ children }) {
   const [searchQuery, setSearchQuery] = useState('')
   const [recordingActive, setRecordingActive] = useState(false)
   const [recordPulse, setRecordPulse] = useState(0)
-  const [liveGuideOpen, setLiveGuideOpen] = useState(false)
+  const [liveGuideView, setLiveGuideView] = useState(null)
+  const liveGuideOpen = Boolean(liveGuideView)
+  const setLiveGuideOpen = useCallback((value) => {
+    const open = typeof value === 'function' ? value(Boolean(liveGuideView)) : Boolean(value)
+    setLiveGuideView(open ? liveGuideView || 'channels' : null)
+  }, [liveGuideView])
   const [voiceArmed, setVoiceArmed] = useState(false)
   const [pipPulse, setPipPulse] = useState(0)
 
@@ -297,8 +302,12 @@ export function PlayerProvider({ children }) {
     const now = Date.now()
     if (now - backLock.current < 250) return 'skip'
     backLock.current = now
-    if (liveGuideOpen) {
-      setLiveGuideOpen(false)
+    if (liveGuideView === 'schedule' || liveGuideView === 'categories') {
+      setLiveGuideView('channels')
+      return 'guide-layer'
+    }
+    if (liveGuideView) {
+      setLiveGuideView(null)
       return 'guide'
     }
     if (uiScreen === 'settings') {
@@ -321,7 +330,7 @@ export function PlayerProvider({ children }) {
     }
     setUiScreen('menu')
     return 'menu'
-  }, [isFullscreen, isModalOpen, liveGuideOpen, uiScreen])
+  }, [isFullscreen, isModalOpen, liveGuideView, uiScreen])
 
   const requestRecord = useCallback(() => {
     setRecordPulse((value) => value + 1)
@@ -341,7 +350,7 @@ export function PlayerProvider({ children }) {
     if (!selectedChannelId) return
     setUiScreen(null)
     setIsFullscreen(true)
-    setLiveGuideOpen((value) => !value)
+    setLiveGuideView((current) => (current ? null : 'channels'))
   }, [selectedChannelId])
 
   const exportBackup = useCallback(() => {
@@ -473,6 +482,7 @@ export function PlayerProvider({ children }) {
     playlistUrl,
     epgUrl,
     channels,
+    recentIds,
     groups,
     playlistGroups,
     visibleChannels,
@@ -526,7 +536,9 @@ export function PlayerProvider({ children }) {
     pipPulse,
     requestPip,
     liveGuideOpen,
+    liveGuideView,
     setLiveGuideOpen,
+    setLiveGuideView,
     toggleLiveGuide,
     voiceArmed,
     setVoiceArmed,

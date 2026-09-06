@@ -523,7 +523,7 @@ export function SettingsScreen() {
         {settingsTab === 'remote' ? (
           <div>
             <p className="mb-4 text-sm text-white/40">
-              Нажмите «Сменить», затем кнопку на пульте (G10S, D-pad, гиромышь OK). Назад, громкость, CH+/CH−, поиск и гид работают сразу.
+              Нажмите «Сменить», затем кнопку на пульте (G10S, D-pad, гиромышь OK). Назад, CH+/CH−, поиск и гид работают сразу. Громкость: + и −.
             </p>
             {Object.keys(KEY_LABELS).map((id) => (
               <Row key={id} title={KEY_LABELS[id]} hint={capturing === id ? 'Нажмите кнопку на пульте…' : keyCaption(settings.keys[id])}>

@@ -67,6 +67,13 @@ export function useKeyboardNav() {
 
       if (isModalOpen) return
 
+      const vol = volumeDelta(event)
+      if (vol && !typing) {
+        event.preventDefault()
+        nudgeVolume(vol)
+        return
+      }
+
       if (liveGuideOpen) return
 
       if ((isMenuKey(event) || matchesBinding(event, keys.menu)) && !typing) {
@@ -100,13 +107,6 @@ export function useKeyboardNav() {
         return
       }
 
-      const vol = volumeDelta(event)
-      if (vol) {
-        event.preventDefault()
-        nudgeVolume(vol)
-        return
-      }
-
       if (isMuteKey(event) || matchesBinding(event, keys.mute)) {
         if (typing) return
         event.preventDefault()
@@ -124,12 +124,10 @@ export function useKeyboardNav() {
       const insidePlayer = focusZone === 'player' || isFullscreen
       const dir = arrowDir(event)
 
-      if (selectedChannel && insidePlayer && !liveGuideOpen && (matchesBinding(event, keys.liveGuide) || dir === 'left')) {
-        if (matchesBinding(event, keys.liveGuide) || keys.liveGuide === 'ArrowLeft' || !keys.liveGuide) {
-          event.preventDefault()
-          toggleLiveGuide()
-          return
-        }
+      if (selectedChannel && insidePlayer && !liveGuideOpen && (dir === 'left' || matchesBinding(event, keys.liveGuide))) {
+        event.preventDefault()
+        toggleLiveGuide()
+        return
       }
 
       if (isOkKey(event) || matchesBinding(event, keys.fullscreen)) {
@@ -154,10 +152,7 @@ export function useKeyboardNav() {
 
       event.preventDefault()
 
-      if (insidePlayer && (dir === 'left' || dir === 'right')) {
-        nudgeVolume(dir === 'right' ? 1 : -1)
-        return
-      }
+      if (insidePlayer && (dir === 'left' || dir === 'right')) return
 
       if (dir === 'up') {
         if (!isFullscreen && focusZone === 'groups') moveGroup(-1)
