@@ -50,18 +50,21 @@
       "target": [
         "nsis",
         "portable"
-      ]
+      ],
+      "artifactName": "${productName}-${version}-windows.${ext}"
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "linux": {
       "target": [
         "tar.gz"
       ],
+      "artifactName": "${productName}-${version}-linux-${arch}.${ext}",
       "category": "AudioVideo",
-      "synopsis": "IPTV player"
+      "synopsis": "Premium IPTV player"
     }
   }
 }
