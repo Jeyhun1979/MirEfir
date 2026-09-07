@@ -1,8 +1,8 @@
-const { app, BrowserWindow, ipcMain, dialog, session, shell, net } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, session, shell } = require('electron')
 const path = require('path')
 const fs = require('fs')
-const { spawn } = require('child_process')
 const { pathToFileURL } = require('url')
+const { registerUpdateIpc } = require('./updater.cjs')
 
 const DEV_URL = 'http://127.0.0.1:5173'
 const CONFIG_NAME = 'mirefir-config.json'
@@ -103,6 +103,7 @@ app.whenReady().then(() => {
   })
 
   createWindow()
+  registerUpdateIpc()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -205,56 +206,6 @@ ipcMain.handle('config:save', async (_event, data) => {
   if (!data || typeof data !== 'object') return false
   fs.mkdirSync(app.getPath('userData'), { recursive: true })
   fs.writeFileSync(configPath(), JSON.stringify(data))
-  return true
-})
-
-ipcMain.handle('update:download', async (event, url) => {
-  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) throw new Error('Нет ссылки на обновление')
-  const dest = path.join(app.getPath('temp'), path.basename(new URL(url).pathname) || 'MirEfir-update.bin')
-  await new Promise((resolve, reject) => {
-    const request = net.request({ url, redirect: 'follow' })
-    request.on('response', (response) => {
-      if (response.statusCode >= 400) {
-        reject(new Error(`Сервер обновления ответил ${response.statusCode}`))
-        return
-      }
-      const total = Number(response.headers['content-length']?.[0] || response.headers['content-length'] || 0)
-      let received = 0
-      const file = fs.createWriteStream(dest)
-      response.on('data', (chunk) => {
-        received += chunk.length
-        file.write(chunk)
-        event.sender.send('update:progress', { received, total })
-      })
-      response.on('end', () => {
-        file.end(() => resolve())
-      })
-      response.on('error', reject)
-    })
-    request.on('error', reject)
-    request.end()
-  })
-  return dest
-})
-
-ipcMain.handle('update:apply', async (_event, filePath) => {
-  if (!filePath || !fs.existsSync(filePath)) throw new Error('Файл обновления не найден')
-  const bat = path.join(app.getPath('temp'), 'mirefir-update.cmd')
-  const portableDir = process.env.PORTABLE_EXECUTABLE_DIR
-  const lines = ['@echo off', 'timeout /t 2 /nobreak >nul', 'taskkill /F /IM MirEfir.exe /T >nul 2>&1', 'timeout /t 1 /nobreak >nul']
-  if (portableDir && !/setup/i.test(path.basename(filePath))) {
-    const target = path.join(portableDir, path.basename(process.execPath))
-    lines.push(`copy /y "${filePath}" "${target}"`)
-    lines.push(`start "" "${target}"`)
-  } else {
-    const installDir = path.dirname(process.execPath)
-    lines.push(`"${filePath}" /S /D=${installDir}`)
-  }
-  lines.push(`del "${filePath}" >nul 2>&1`)
-  lines.push('del "%~f0" >nul 2>&1')
-  fs.writeFileSync(bat, lines.join('\r\n'), 'utf8')
-  spawn('cmd.exe', ['/c', bat], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
-  app.quit()
   return true
 })
 

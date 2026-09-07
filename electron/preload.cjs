@@ -15,8 +15,9 @@ contextBridge.exposeInMainWorld('mirefir', {
   loadPersist: () => ipcRenderer.invoke('config:load'),
   savePersist: (data) => ipcRenderer.invoke('config:save', data),
   appInfo: () => ipcRenderer.invoke('app:info'),
-  downloadUpdate: (url) => ipcRenderer.invoke('update:download', url),
-  applyUpdate: (filePath) => ipcRenderer.invoke('update:apply', filePath),
+  checkUpdate: () => ipcRenderer.invoke('update:check'),
+  downloadUpdate: () => ipcRenderer.invoke('update:download'),
+  applyUpdate: () => ipcRenderer.invoke('update:apply'),
   onUpdateProgress: (handler) => {
     const listen = (_event, data) => handler(data)
     ipcRenderer.on('update:progress', listen)

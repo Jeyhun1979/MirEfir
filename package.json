@@ -1,7 +1,7 @@
 {
   "name": "mirefir",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.3",
   "author": "MirEfir",
   "description": "IPTV player for Windows, Linux and Android",
   "main": "electron/main.cjs",
@@ -21,18 +21,19 @@
     "@capacitor/app": "^7.1.0",
     "@capacitor/core": "^7.4.3",
     "@capacitor/status-bar": "^7.0.3",
+    "electron-updater": "^6.8.9",
     "hls.js": "^1.6.13",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
   "devDependencies": {
     "@capacitor/cli": "^7.4.3",
+    "@tailwindcss/vite": "^4.1.13",
     "@vitejs/plugin-react": "^5.0.2",
     "concurrently": "^9.2.1",
     "electron": "^37.3.1",
     "electron-builder": "^26.0.12",
     "tailwindcss": "^4.1.13",
-    "@tailwindcss/vite": "^4.1.13",
     "vite": "^7.1.5",
     "wait-on": "^8.0.5"
   },
@@ -73,6 +74,12 @@
       "artifactName": "${productName}-${version}-linux-${arch}.${ext}",
       "category": "AudioVideo",
       "synopsis": "Premium IPTV player"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Jeyhun1979",
+      "repo": "MirEfir",
+      "releaseType": "release"
     }
   }
 }

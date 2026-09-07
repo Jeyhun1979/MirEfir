@@ -9,17 +9,20 @@ export function UpdateDialog() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    let kind = ''
     const start = async () => {
       try {
         const info = await window.mirefir?.appInfo?.()
+        if (info?.packaged && window.mirefir?.checkUpdate) {
+          setUpdate(await window.mirefir.checkUpdate())
+          return
+        }
+        let kind = ''
         if (info?.portable) kind = 'portable'
-        else if (info?.packaged) kind = 'nsis'
         else if (/Android/i.test(navigator.userAgent)) kind = 'android'
+        setUpdate(await checkForUpdate(kind))
       } catch {
-        /* browser */
+        setUpdate(null)
       }
-      setUpdate(await checkForUpdate(kind))
     }
     start()
   }, [])
@@ -39,22 +42,21 @@ export function UpdateDialog() {
 
   const install = async () => {
     setError('')
-    if (!window.mirefir?.downloadUpdate || !update.downloadUrl) {
-      const href = update.downloadUrl || update.pageUrl
-      if (window.mirefir?.openExternal) window.mirefir.openExternal(href)
-      else window.open(href, '_blank')
+    if (window.mirefir?.downloadUpdate && window.mirefir?.applyUpdate) {
+      setBusy(true)
+      setProgress('Скачивание обновления…')
+      try {
+        await window.mirefir.downloadUpdate()
+        setProgress('Установка… приложение закроется на пару секунд')
+        await window.mirefir.applyUpdate()
+      } catch (err) {
+        setBusy(false)
+        setError(err.message || 'Не удалось установить обновление')
+      }
       return
     }
-    setBusy(true)
-    setProgress('Скачивание обновления…')
-    try {
-      const filePath = await window.mirefir.downloadUpdate(update.downloadUrl)
-      setProgress('Установка… приложение закроется на пару секунд')
-      await window.mirefir.applyUpdate(filePath)
-    } catch (err) {
-      setBusy(false)
-      setError(err.message || 'Не удалось установить обновление')
-    }
+    const href = update.downloadUrl || update.pageUrl
+    if (href) window.open(href, '_blank')
   }
 
   return (
@@ -62,7 +64,8 @@ export function UpdateDialog() {
       <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#10151e] p-5">
         <div className="mb-1 text-lg font-semibold">Доступна новая версия</div>
         <p className="mb-4 text-sm text-white/50">
-          Сейчас {APP_VERSION}, вышла {update.version}. Плейлист, телепрограмма и настройки останутся. Обновление скачается и установится само.
+          Сейчас {APP_VERSION}, вышла {update.version}. Обновление скачается в фоне и установится само, без браузера.
+          Плейлист, телепрограмма и настройки останутся.
         </p>
         {update.notes ? <p className="mb-4 max-h-28 overflow-y-auto text-xs text-white/40">{update.notes}</p> : null}
         {progress ? <p className="mb-3 text-sm text-sky-300">{progress}</p> : null}
