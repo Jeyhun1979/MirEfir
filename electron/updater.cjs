@@ -6,15 +6,9 @@ const { spawn } = require('child_process')
 const GITHUB_OWNER = 'Jeyhun1979'
 const GITHUB_REPO = 'MirEfir'
 
-let autoUpdater = null
+let pendingUrl = ''
 let pendingFile = ''
-let pendingMode = ''
-
-try {
-  ;({ autoUpdater } = require('electron-updater'))
-} catch {
-  autoUpdater = null
-}
+let applying = false
 
 function sendProgress(payload) {
   const win = BrowserWindow.getAllWindows()[0]
@@ -37,12 +31,18 @@ function isNewer(remote, local) {
   return false
 }
 
-function pickSetup(assets, portable) {
+function pickSetup(assets) {
   const files = assets || []
-  if (portable) {
-    return files.find((item) => /\.exe$/i.test(item.name) && !/setup/i.test(item.name))
-  }
   return files.find((item) => /\.exe$/i.test(item.name) && /setup/i.test(item.name)) || files.find((item) => /\.exe$/i.test(item.name))
+}
+
+function logUpdate(message) {
+  try {
+    const file = path.join(app.getPath('userData'), 'updater.log')
+    fs.appendFileSync(file, `${new Date().toISOString()} ${message}\n`)
+  } catch {
+    /* ignore */
+  }
 }
 
 function fetchJson(url) {
@@ -99,15 +99,66 @@ function downloadToFile(url, dest) {
   })
 }
 
-async function checkGithubFallback() {
+function quote(value) {
+  return `"${String(value).replace(/"/g, '')}"`
+}
+
+function applyDownloadedFile(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) throw new Error('Файл обновления не найден')
+  applying = true
+  const temp = app.getPath('temp')
+  const bat = path.join(temp, 'mirefir-update.cmd')
+  const vbs = path.join(temp, 'mirefir-update.vbs')
+  const log = path.join(app.getPath('userData'), 'updater.log')
+  const exe = process.execPath
+  const setup = path.resolve(filePath)
+
+  const lines = [
+    '@echo off',
+    `echo apply-start %date% %time%>>${quote(log)}`,
+    'ping 127.0.0.1 -n 5 >nul',
+    `"%SystemRoot%\\System32\\taskkill.exe" /F /IM MirEfir.exe /T >>${quote(log)} 2>&1`,
+    'ping 127.0.0.1 -n 4 >nul',
+    `echo running-setup>>${quote(log)}`,
+    `${quote(setup)} /S /NCRC`,
+    `echo setup-exit %ERRORLEVEL%>>${quote(log)}`,
+    'ping 127.0.0.1 -n 6 >nul',
+    `if exist ${quote(exe)} start "" ${quote(exe)}`,
+    `echo relaunched>>${quote(log)}`,
+    `del /f /q ${quote(setup)} >nul 2>&1`,
+    `del /f /q ${quote(vbs)} >nul 2>&1`,
+    'del /f /q "%~f0" >nul 2>&1',
+  ]
+  fs.writeFileSync(bat, lines.join('\r\n'), 'utf8')
+  const vbsPath = bat.replace(/\\/g, '\\\\')
+  fs.writeFileSync(vbs, `CreateObject("WScript.Shell").Run "${vbsPath}", 0, False\r\n`, 'utf8')
+  logUpdate(`spawn hidden installer ${setup}`)
+  spawn('wscript.exe', ['//B', '//Nologo', vbs], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  }).unref()
+  setTimeout(() => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.removeAllListeners('close')
+      if (!win.isDestroyed()) win.destroy()
+    }
+    app.exit(0)
+  }, 600)
+  return true
+}
+
+async function checkUpdate() {
+  pendingUrl = ''
+  pendingFile = ''
+  if (!app.isPackaged) return null
   const data = await fetchJson(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`)
   const version = String(data.tag_name || data.name || '').replace(/^v/i, '')
   if (!version || !isNewer(version, app.getVersion())) return null
-  const portable = Boolean(process.env.PORTABLE_EXECUTABLE_DIR)
-  const asset = pickSetup(data.assets || [], portable)
+  const asset = pickSetup(data.assets || [])
   if (!asset?.browser_download_url) throw new Error('В релизе нет файла установки Windows')
-  pendingMode = 'file'
-  pendingFile = asset.browser_download_url
+  pendingUrl = asset.browser_download_url
+  logUpdate(`found ${version} ${pendingUrl}`)
   return {
     version,
     notes: typeof data.body === 'string' ? data.body : '',
@@ -115,109 +166,28 @@ async function checkGithubFallback() {
   }
 }
 
-function applyDownloadedFile(filePath) {
-  if (!filePath || !fs.existsSync(filePath)) throw new Error('Файл обновления не найден')
-  const bat = path.join(app.getPath('temp'), 'mirefir-update.cmd')
-  const portableDir = process.env.PORTABLE_EXECUTABLE_DIR
-  const exe = process.execPath
-  const installDir = path.dirname(exe)
-  const lines = [
-    '@echo off',
-    'timeout /t 3 /nobreak >nul',
-    'taskkill /F /IM MirEfir.exe /T >nul 2>&1',
-    'timeout /t 2 /nobreak >nul',
-  ]
-  if (portableDir && !/setup/i.test(path.basename(filePath))) {
-    const target = path.join(portableDir, path.basename(exe))
-    lines.push(`copy /y "${filePath}" "${target}"`)
-    lines.push(`start "" "${target}"`)
-  } else {
-    lines.push(`start /wait "" "${filePath}" /S /NCRC /D=${installDir}`)
-    lines.push(`start "" "${exe}"`)
-  }
-  lines.push(`del "${filePath}" >nul 2>&1`)
-  lines.push('del "%~f0" >nul 2>&1')
-  fs.writeFileSync(bat, lines.join('\r\n'), 'utf8')
-  spawn('cmd.exe', ['/c', bat], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
-  setTimeout(() => {
-    for (const win of BrowserWindow.getAllWindows()) {
-      win.removeAllListeners('close')
-      if (!win.isDestroyed()) win.destroy()
-    }
-    app.exit(0)
-  }, 400)
-  return true
-}
-
-function setupAutoUpdater() {
-  if (!autoUpdater || !app.isPackaged) return
-  autoUpdater.autoDownload = false
-  autoUpdater.autoInstallOnAppQuit = false
-  autoUpdater.allowDowngrade = false
-  try {
-    autoUpdater.setFeedURL({
-      provider: 'github',
-      owner: GITHUB_OWNER,
-      repo: GITHUB_REPO,
-    })
-  } catch {
-    /* keep defaults from package.json publish */
-  }
-  autoUpdater.on('download-progress', (progress) => {
-    sendProgress({ received: progress.transferred || 0, total: progress.total || 0 })
-  })
-}
-
-async function checkUpdate() {
-  pendingFile = ''
-  pendingMode = ''
-  if (!app.isPackaged) return null
-
-  if (autoUpdater) {
-    try {
-      const result = await autoUpdater.checkForUpdates()
-      const info = result?.updateInfo
-      const version = String(info?.version || '').replace(/^v/i, '')
-      if (version && isNewer(version, app.getVersion())) {
-        pendingMode = 'electron'
-        return {
-          version,
-          notes: typeof info.releaseNotes === 'string' ? info.releaseNotes : '',
-        }
-      }
-    } catch {
-      /* no latest.yml yet — GitHub API fallback */
-    }
-  }
-
-  return checkGithubFallback()
-}
-
 async function downloadUpdate() {
-  if (pendingMode === 'electron' && autoUpdater) {
-    await autoUpdater.downloadUpdate()
-    return 'electron'
-  }
-  if (!pendingFile) throw new Error('Нет файла обновления')
-  const dest = path.join(app.getPath('temp'), path.basename(new URL(pendingFile).pathname) || 'MirEfir-Setup.exe')
-  pendingFile = await downloadToFile(pendingFile, dest)
-  pendingMode = 'file'
+  if (pendingFile && fs.existsSync(pendingFile)) return pendingFile
+  if (!pendingUrl) throw new Error('Нет файла обновления')
+  const dest = path.join(app.getPath('temp'), path.basename(new URL(pendingUrl).pathname) || 'MirEfir-Setup.exe')
+  pendingFile = await downloadToFile(pendingUrl, dest)
+  logUpdate(`downloaded ${pendingFile}`)
   return pendingFile
 }
 
 async function applyUpdate() {
-  if (pendingMode === 'electron' && autoUpdater) {
-    autoUpdater.quitAndInstall(true, true)
-    return true
-  }
+  if (!pendingFile) await downloadUpdate()
   return applyDownloadedFile(pendingFile)
 }
 
+function isApplyingUpdate() {
+  return applying
+}
+
 function registerUpdateIpc() {
-  setupAutoUpdater()
   ipcMain.handle('update:check', () => checkUpdate())
   ipcMain.handle('update:download', () => downloadUpdate())
   ipcMain.handle('update:apply', () => applyUpdate())
 }
 
-module.exports = { registerUpdateIpc }
+module.exports = { registerUpdateIpc, isApplyingUpdate }

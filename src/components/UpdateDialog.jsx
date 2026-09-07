@@ -48,7 +48,7 @@ export function UpdateDialog() {
       setProgress('Скачивание обновления…')
       try {
         await window.mirefir.downloadUpdate()
-        setProgress('Установка… приложение закроется на пару секунд')
+        setProgress('Установка… приложение закроется. Если не откроется само — запустите ярлык ещё раз.')
         await window.mirefir.applyUpdate()
       } catch (err) {
         setBusy(false)

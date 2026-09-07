@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, session, shell } = require('electro
 const path = require('path')
 const fs = require('fs')
 const { pathToFileURL } = require('url')
-const { registerUpdateIpc } = require('./updater.cjs')
+const { registerUpdateIpc, isApplyingUpdate } = require('./updater.cjs')
 
 const DEV_URL = 'http://127.0.0.1:5173'
 const CONFIG_NAME = 'mirefir-config.json'
@@ -59,6 +59,10 @@ if (!gotLock) {
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
 function forceQuit() {
+  if (isApplyingUpdate()) {
+    app.exit(0)
+    return
+  }
   for (const win of BrowserWindow.getAllWindows()) {
     win.removeAllListeners('close')
     if (!win.isDestroyed()) win.destroy()
