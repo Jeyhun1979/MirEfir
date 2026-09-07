@@ -61,12 +61,35 @@ export function useRecorder(videoRef, channel, settings, updateSettings) {
       if (!channel) throw new Error('Сначала выберите канал')
 
       const video = videoRef.current
-      const capture = video?.captureStream || video?.mozCaptureStream
-      if (!video || !capture) throw new Error('Плеер ещё не готов')
+      if (!video) throw new Error('Плеер ещё не готов')
 
-      const stream = capture.call(video)
+      if (video.readyState < 2) {
+        await new Promise((resolve, reject) => {
+          const timer = window.setTimeout(() => reject(new Error('Плеер ещё не готов к записи')), 8000)
+          const done = () => {
+            window.clearTimeout(timer)
+            resolve()
+          }
+          video.addEventListener('playing', done, { once: true })
+          video.addEventListener('loadeddata', done, { once: true })
+        })
+      }
+
+      const capture = video.captureStream || video.mozCaptureStream
+      if (!capture) throw new Error('Запись с этого устройства недоступна')
+
+      let stream
+      try {
+        stream = capture.call(video)
+      } catch {
+        throw new Error('Не удалось захватить поток. Подождите, пока картинка появится, и нажмите запись снова.')
+      }
       if (!stream.getVideoTracks().length) {
-        throw new Error('Этот поток нельзя записать. Откройте приложение через Electron (npm run electron:dev).')
+        await new Promise((resolve) => window.setTimeout(resolve, 400))
+        stream = capture.call(video)
+      }
+      if (!stream.getVideoTracks().length) {
+        throw new Error('Этот поток нельзя записать, пока нет картинки. Дождитесь эфира и повторите.')
       }
       const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
         ? 'video/webm;codecs=vp9,opus'

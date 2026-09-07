@@ -1,6 +1,7 @@
-const { app, BrowserWindow, ipcMain, dialog, session, shell } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, session, shell, net } = require('electron')
 const path = require('path')
 const fs = require('fs')
+const { spawn } = require('child_process')
 const { pathToFileURL } = require('url')
 
 const DEV_URL = 'http://127.0.0.1:5173'
@@ -15,18 +16,52 @@ function configPath() {
   return path.join(app.getPath('userData'), CONFIG_NAME)
 }
 
+function collectLegacyProfiles() {
+  const found = []
+  const portableDir = process.env.PORTABLE_EXECUTABLE_DIR
+  if (portableDir) found.push(path.join(portableDir, 'MirEfir-data'))
+  const roots = [app.getPath('desktop'), app.getPath('documents'), app.getPath('downloads')]
+  for (const root of roots) {
+    found.push(path.join(root, 'MirEfir-data'))
+    try {
+      for (const name of fs.readdirSync(root)) {
+        if (/^mirefir-data$/i.test(name)) found.push(path.join(root, name))
+        if (/mirefir.*\.exe$/i.test(name)) found.push(path.join(root, 'MirEfir-data'))
+      }
+    } catch {
+      /* folder missing */
+    }
+  }
+  return [...new Set(found)]
+}
+
 const stableUserData = path.join(app.getPath('appData'), 'MirEfir')
-const portableDir = process.env.PORTABLE_EXECUTABLE_DIR
-const besidePortable = portableDir ? path.join(portableDir, 'MirEfir-data') : ''
-if (portableDir && profileHasData(besidePortable) && !profileHasData(stableUserData)) {
-  try {
-    fs.mkdirSync(stableUserData, { recursive: true })
-    fs.cpSync(besidePortable, stableUserData, { recursive: true, force: false })
-  } catch {
-    /* keep going with empty or partial profile */
+if (!profileHasData(stableUserData)) {
+  for (const dir of collectLegacyProfiles()) {
+    if (!profileHasData(dir)) continue
+    try {
+      fs.mkdirSync(stableUserData, { recursive: true })
+      fs.cpSync(dir, stableUserData, { recursive: true, force: false })
+      break
+    } catch {
+      /* try next folder */
+    }
   }
 }
 app.setPath('userData', stableUserData)
+
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    const win = BrowserWindow.getAllWindows()[0]
+    if (!win) return
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+  })
+}
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
@@ -58,6 +93,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  if (!gotLock) return
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
     const headers = { ...details.requestHeaders }
     if (!headers['User-Agent'] && !headers['user-agent']) {
@@ -118,7 +154,8 @@ ipcMain.handle('storage:space', async (_event, folder) => {
 
 ipcMain.handle('storage:write-chunk', async (_event, payload) => {
   const filePath = payload.filePath
-  const buffer = Buffer.from(payload.buffer)
+  const raw = payload.buffer
+  const buffer = Buffer.isBuffer(raw) ? raw : Buffer.from(raw)
   fs.mkdirSync(path.dirname(filePath), { recursive: true })
   fs.appendFileSync(filePath, buffer)
   return { bytes: buffer.length }
@@ -170,6 +207,61 @@ ipcMain.handle('config:save', async (_event, data) => {
   fs.writeFileSync(configPath(), JSON.stringify(data))
   return true
 })
+
+ipcMain.handle('update:download', async (event, url) => {
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) throw new Error('Нет ссылки на обновление')
+  const dest = path.join(app.getPath('temp'), path.basename(new URL(url).pathname) || 'MirEfir-update.bin')
+  await new Promise((resolve, reject) => {
+    const request = net.request({ url, redirect: 'follow' })
+    request.on('response', (response) => {
+      if (response.statusCode >= 400) {
+        reject(new Error(`Сервер обновления ответил ${response.statusCode}`))
+        return
+      }
+      const total = Number(response.headers['content-length']?.[0] || response.headers['content-length'] || 0)
+      let received = 0
+      const file = fs.createWriteStream(dest)
+      response.on('data', (chunk) => {
+        received += chunk.length
+        file.write(chunk)
+        event.sender.send('update:progress', { received, total })
+      })
+      response.on('end', () => {
+        file.end(() => resolve())
+      })
+      response.on('error', reject)
+    })
+    request.on('error', reject)
+    request.end()
+  })
+  return dest
+})
+
+ipcMain.handle('update:apply', async (_event, filePath) => {
+  if (!filePath || !fs.existsSync(filePath)) throw new Error('Файл обновления не найден')
+  const bat = path.join(app.getPath('temp'), 'mirefir-update.cmd')
+  const portableDir = process.env.PORTABLE_EXECUTABLE_DIR
+  const lines = ['@echo off', 'timeout /t 2 /nobreak >nul', 'taskkill /F /IM MirEfir.exe /T >nul 2>&1', 'timeout /t 1 /nobreak >nul']
+  if (portableDir && !/setup/i.test(path.basename(filePath))) {
+    const target = path.join(portableDir, path.basename(process.execPath))
+    lines.push(`copy /y "${filePath}" "${target}"`)
+    lines.push(`start "" "${target}"`)
+  } else {
+    const installDir = path.dirname(process.execPath)
+    lines.push(`"${filePath}" /S /D=${installDir}`)
+  }
+  lines.push(`del "${filePath}" >nul 2>&1`)
+  lines.push('del "%~f0" >nul 2>&1')
+  fs.writeFileSync(bat, lines.join('\r\n'), 'utf8')
+  spawn('cmd.exe', ['/c', bat], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
+  app.quit()
+  return true
+})
+
+ipcMain.handle('app:info', () => ({
+  packaged: app.isPackaged,
+  portable: Boolean(process.env.PORTABLE_EXECUTABLE_DIR),
+}))
 
 ipcMain.handle('playlist:open-file', async () => {
   const result = await dialog.showOpenDialog({

@@ -7,12 +7,19 @@ contextBridge.exposeInMainWorld('mirefir', {
   pickFolder: () => ipcRenderer.invoke('storage:pick-folder'),
   internalFolder: () => ipcRenderer.invoke('storage:internal-folder'),
   storageSpace: (folder) => ipcRenderer.invoke('storage:space', folder),
-  writeChunk: (filePath, buffer) =>
-    ipcRenderer.invoke('storage:write-chunk', { filePath, buffer: Buffer.from(buffer) }),
+  writeChunk: (filePath, buffer) => ipcRenderer.invoke('storage:write-chunk', { filePath, buffer }),
   readFile: (filePath) => ipcRenderer.invoke('storage:read-file', filePath),
   listRecordings: (folder) => ipcRenderer.invoke('storage:list-files', folder),
   fileUrl: (filePath) => ipcRenderer.invoke('storage:file-url', filePath),
   quit: () => ipcRenderer.invoke('app:quit'),
   loadPersist: () => ipcRenderer.invoke('config:load'),
   savePersist: (data) => ipcRenderer.invoke('config:save', data),
+  appInfo: () => ipcRenderer.invoke('app:info'),
+  downloadUpdate: (url) => ipcRenderer.invoke('update:download', url),
+  applyUpdate: (filePath) => ipcRenderer.invoke('update:apply', filePath),
+  onUpdateProgress: (handler) => {
+    const listen = (_event, data) => handler(data)
+    ipcRenderer.on('update:progress', listen)
+    return () => ipcRenderer.removeListener('update:progress', listen)
+  },
 })

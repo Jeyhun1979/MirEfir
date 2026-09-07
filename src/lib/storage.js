@@ -44,7 +44,8 @@ export async function pickStorageFolder() {
 export async function appendChunk(folderPath, fileName, buffer) {
   if (window.mirefir?.writeChunk) {
     const filePath = `${folderPath.replace(/[\\/]$/, '')}\\${fileName}`.replace(/\//g, '\\')
-    await window.mirefir.writeChunk(filePath, buffer)
+    const bytes = buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : buffer
+    await window.mirefir.writeChunk(filePath, bytes)
     return filePath
   }
 

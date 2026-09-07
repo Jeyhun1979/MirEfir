@@ -3,10 +3,12 @@ import { getCurrentProgram, getNextProgram } from '../lib/epg.js'
 import { collectGroups, loadPlaylistFromFile, loadPlaylistFromUrl, parseM3U } from '../lib/m3uParser.js'
 import { bindEpgToChannels, loadXmltv } from '../lib/xmltv.js'
 import { decodeCloudCode, encodeCloudCode } from '../lib/cloudCode.js'
+import { buildCatchupUrl, canPlayArchive } from '../lib/catchup.js'
 import { applyBackup, buildBackup, loadSettings, queuePersistFile, restorePersistFile, saveSettings } from '../lib/settingsStore.js'
 
 const PlayerContext = createContext(null)
 const FAVORITES_KEY = 'mirefir.favorites'
+const SESSION_KEY = 'mirefir.session'
 const VOLUME_KEY = 'mirefir.volume'
 const MUTE_KEY = 'mirefir.muted'
 const VOLUME_STEP = 0.05
@@ -46,6 +48,52 @@ function readVolume() {
   }
   if (!Number.isFinite(value) || value <= 0) return 0.2
   return Math.min(1, Math.max(0.05, value))
+}
+
+function readSession() {
+  try {
+    return JSON.parse(localStorage.getItem(SESSION_KEY) || 'null')
+  } catch {
+    return null
+  }
+}
+
+function writeSession(data) {
+  localStorage.setItem(SESSION_KEY, JSON.stringify(data))
+}
+
+function orderedFavorites(channels, favorites) {
+  return favorites.map((id) => channels.find((channel) => channel.id === id)).filter(Boolean)
+}
+
+function findSessionChannel(channels, session) {
+  if (!session || !channels?.length) return null
+  return (
+    channels.find((channel) => channel.id === session.channelId) ||
+    channels.find((channel) => session.channelUrl && channel.url === session.channelUrl) ||
+    channels.find(
+      (channel) =>
+        session.channelName &&
+        (channel.name === session.channelName || channel.displayName === session.channelName),
+    ) ||
+    null
+  )
+}
+
+function restoreFromSession(channels, groups, session) {
+  const channel = findSessionChannel(channels, session)
+  if (!channel) {
+    return { channelId: channels[0]?.id || '', groupId: 'all', listMode: 'live' }
+  }
+  let groupId = session.groupId || 'all'
+  const known =
+    groupId === 'all' ||
+    groupId === 'favorites' ||
+    groupId === 'recent' ||
+    (groups || []).some((group) => group.id === groupId) ||
+    channels.some((item) => item.group === groupId)
+  if (!known) groupId = channel.group || 'all'
+  return { channelId: channel.id, groupId, listMode: session.listMode || 'live' }
 }
 
 function readFavorites() {
@@ -92,6 +140,10 @@ export function PlayerProvider({ children }) {
   const [pipPulse, setPipPulse] = useState(0)
   const [exitPrompt, setExitPrompt] = useState(false)
   const [menuResumeGuide, setMenuResumeGuide] = useState(false)
+  const [streamOverride, setStreamOverride] = useState(null)
+  const [channelMenu, setChannelMenu] = useState(null)
+  const [movingFavoriteId, setMovingFavoriteId] = useState(null)
+  const favoriteMoveSnapshot = useRef(null)
 
   const playlistGroups = useMemo(() => {
     const hidden = settings.hiddenGroups || []
@@ -119,7 +171,7 @@ export function PlayerProvider({ children }) {
     } else if (listMode === 'series') {
       list = list.filter((channel) => /сериал|series|show/i.test(channel.group))
     } else if (selectedGroupId === 'favorites' || listMode === 'favorites') {
-      list = channels.filter((channel) => favorites.includes(channel.id))
+      list = orderedFavorites(channels, favorites)
     } else if (selectedGroupId === 'recent' || listMode === 'history') {
       list = recentIds.map((id) => channels.find((channel) => channel.id === id)).filter(Boolean)
     } else if (selectedGroupId && selectedGroupId !== 'all') {
@@ -131,10 +183,13 @@ export function PlayerProvider({ children }) {
       list = channels.filter((channel) => (channel.displayName || channel.name || '').toLowerCase().includes(q))
     }
 
-    if (settings.channelSort === 'name') {
-      list = [...list].sort((a, b) => (a.displayName || a.name).localeCompare(b.displayName || b.name, 'ru'))
-    } else if (settings.channelSort === 'number') {
-      list = [...list].sort((a, b) => (a.number || 0) - (b.number || 0))
+    const keepFavoriteOrder = selectedGroupId === 'favorites' || listMode === 'favorites'
+    if (!keepFavoriteOrder) {
+      if (settings.channelSort === 'name') {
+        list = [...list].sort((a, b) => (a.displayName || a.name).localeCompare(b.displayName || b.name, 'ru'))
+      } else if (settings.channelSort === 'number') {
+        list = [...list].sort((a, b) => (a.number || 0) - (b.number || 0))
+      }
     }
 
     return list
@@ -157,10 +212,10 @@ export function PlayerProvider({ children }) {
 
   const applyPlaylist = useCallback(async (parsed) => {
     setPlaylistName(parsed.name)
-    setSelectedGroupId('all')
-    const firstChannel = parsed.channels[0]
-    setSelectedChannelId(firstChannel?.id || '')
-    setRecentIds([])
+    const restored = restoreFromSession(parsed.channels, parsed.groups || collectGroups(parsed.channels), readSession())
+    setListMode(restored.listMode)
+    setSelectedGroupId(restored.groupId)
+    setSelectedChannelId(restored.channelId)
     setFocusZone('channels')
     setIsFullscreen(false)
     setError('')
@@ -262,7 +317,7 @@ export function PlayerProvider({ children }) {
         groupId === 'all'
           ? channels[0]
           : groupId === 'favorites'
-            ? channels.find((channel) => favorites.includes(channel.id))
+            ? orderedFavorites(channels, favorites)[0]
             : groupId === 'recent'
               ? channels.find((channel) => channel.id === recentIds[0])
               : channels.find((channel) => channel.group === groupId)
@@ -272,9 +327,61 @@ export function PlayerProvider({ children }) {
   )
 
   const selectChannel = useCallback((channelId) => {
+    setStreamOverride(null)
     setSelectedChannelId(channelId)
     setRecentIds((current) => [channelId, ...current.filter((id) => id !== channelId)].slice(0, 24))
   }, [])
+
+  const playProgram = useCallback(
+    (channel, program) => {
+      if (!channel) return false
+      const now = Date.now()
+      if (!program || (program.start <= now && now < program.end)) {
+        selectChannel(channel.id)
+        return true
+      }
+      if (program.start > now) {
+        setError('Эта передача ещё не началась')
+        return false
+      }
+      if (!canPlayArchive(channel, program, now, settings.archiveEnabled ? settings.archiveDays : 0)) {
+        setError('Архив для этого канала недоступен')
+        return false
+      }
+      const url = buildCatchupUrl(channel, program.start, program.end)
+      if (!url) {
+        setError('Не удалось собрать ссылку архива')
+        return false
+      }
+      setSelectedChannelId(channel.id)
+      setRecentIds((current) => [channel.id, ...current.filter((id) => id !== channel.id)].slice(0, 24))
+      setStreamOverride({
+        url,
+        mode: 'archive',
+        start: program.start,
+        end: program.end,
+        title: program.title,
+        channelId: channel.id,
+      })
+      setError('')
+      return true
+    },
+    [selectChannel, settings.archiveDays, settings.archiveEnabled],
+  )
+
+  const seekArchive = useCallback((deltaSec) => {
+    setStreamOverride((current) => {
+      if (!current || current.mode !== 'archive') return current
+      const span = current.end - current.start
+      const nextStart = current.start + deltaSec * 1000
+      const nextEnd = nextStart + span
+      const channel = channels.find((item) => item.id === current.channelId)
+      if (!channel) return current
+      const url = buildCatchupUrl(channel, nextStart, nextEnd)
+      if (!url) return current
+      return { ...current, url, start: nextStart, end: nextEnd }
+    })
+  }, [channels])
 
   const moveChannel = useCallback(
     (direction) => {
@@ -350,6 +457,14 @@ export function PlayerProvider({ children }) {
     setVoiceArmed(false)
     setExitPrompt(false)
     setMenuResumeGuide(false)
+    setChannelMenu(null)
+    if (favoriteMoveSnapshot.current) {
+      const snap = favoriteMoveSnapshot.current
+      setFavorites(snap)
+      localStorage.setItem(FAVORITES_KEY, JSON.stringify(snap))
+      favoriteMoveSnapshot.current = null
+    }
+    setMovingFavoriteId(null)
     setLiveGuideOpen(false)
   }, [])
 
@@ -361,6 +476,21 @@ export function PlayerProvider({ children }) {
     if (exitPrompt) {
       setExitPrompt(false)
       return 'exit-prompt'
+    }
+    if (movingFavoriteId) {
+      if (favoriteMoveSnapshot.current) {
+        const snap = favoriteMoveSnapshot.current
+        setFavorites(snap)
+        localStorage.setItem(FAVORITES_KEY, JSON.stringify(snap))
+        queuePersistFile()
+        favoriteMoveSnapshot.current = null
+      }
+      setMovingFavoriteId(null)
+      return 'fav-move'
+    }
+    if (channelMenu) {
+      setChannelMenu(null)
+      return 'channel-menu'
     }
     if (liveGuideView === 'groups') {
       setLiveGuideView('categories')
@@ -401,7 +531,7 @@ export function PlayerProvider({ children }) {
     }
     setUiScreen('menu')
     return 'menu'
-  }, [exitPrompt, isFullscreen, isModalOpen, liveGuideView, menuResumeGuide, uiScreen])
+  }, [exitPrompt, isFullscreen, isModalOpen, liveGuideView, menuResumeGuide, movingFavoriteId, channelMenu, uiScreen])
 
   const requestRecord = useCallback(() => {
     setRecordPulse((value) => value + 1)
@@ -520,6 +650,83 @@ export function PlayerProvider({ children }) {
     })
   }, [])
 
+  const openChannelMenu = useCallback((channel, cursor = 0) => {
+    if (!channel) return
+    setChannelMenu({ channelId: channel.id, cursor })
+  }, [])
+
+  const startFavoriteMove = useCallback(
+    (channelId) => {
+      setFavorites((current) => {
+        favoriteMoveSnapshot.current = [...current]
+        return current
+      })
+      setSelectedChannelId(channelId)
+      setMovingFavoriteId(channelId)
+      setChannelMenu(null)
+      setUiScreen(null)
+      if (isFullscreen && !liveGuideView) setLiveGuideView('channels')
+    },
+    [isFullscreen, liveGuideView],
+  )
+
+  const commitFavoriteMove = useCallback(() => {
+    favoriteMoveSnapshot.current = null
+    setMovingFavoriteId(null)
+    queuePersistFile()
+  }, [])
+
+  const moveFavorite = useCallback((channelId, direction) => {
+    setFavorites((current) => {
+      const index = current.indexOf(channelId)
+      if (index < 0) return current
+      const to = index + direction
+      if (to < 0 || to >= current.length) return current
+      const next = [...current]
+      const [item] = next.splice(index, 1)
+      next.splice(to, 0, item)
+      localStorage.setItem(FAVORITES_KEY, JSON.stringify(next))
+      queuePersistFile()
+      return next
+    })
+  }, [])
+
+  const channelMenuItems = useCallback(
+    (channel, folderId = selectedGroupId) => {
+      if (!channel) return []
+      const starred = favorites.includes(channel.id)
+      const items = [{ id: 'fav', title: starred ? 'Удалить из избранного' : 'Добавить в избранное' }]
+      if ((folderId === 'favorites' || listMode === 'favorites') && starred) {
+        items.push({ id: 'move', title: 'Переместить' })
+      }
+      return items
+    },
+    [favorites, listMode, selectedGroupId],
+  )
+
+  const runChannelMenuItem = useCallback(
+    (channel, itemId) => {
+      setChannelMenu(null)
+      if (!channel || !itemId) return
+      if (itemId === 'fav') toggleFavorite(channel.id)
+      if (itemId === 'move') startFavoriteMove(channel.id)
+    },
+    [startFavoriteMove, toggleFavorite],
+  )
+
+  useEffect(() => {
+    if (!selectedChannelId || !channels.length) return
+    const channel = channels.find((item) => item.id === selectedChannelId)
+    writeSession({
+      channelId: selectedChannelId,
+      channelUrl: channel?.url || '',
+      channelName: channel?.name || channel?.displayName || '',
+      groupId: selectedGroupId || 'all',
+      listMode,
+    })
+    queuePersistFile()
+  }, [channels, listMode, selectedChannelId, selectedGroupId])
+
   const bootstrapped = useRef(false)
   const [bootReady, setBootReady] = useState(false)
 
@@ -531,6 +738,7 @@ export function PlayerProvider({ children }) {
     const start = async () => {
       await restorePersistFile()
       if (cancelled) return
+      setFavorites(readFavorites())
 
       const url = readPlaylistUrl()
       const savedText = readPlaylistText()
@@ -579,6 +787,10 @@ export function PlayerProvider({ children }) {
     visibleChannels,
     selectedGroupId,
     selectedChannel,
+    streamUrl: streamOverride?.url || selectedChannel?.url || '',
+    playback: streamOverride,
+    playProgram,
+    seekArchive,
     focusZone,
     isFullscreen,
     isModalOpen,
@@ -618,6 +830,15 @@ export function PlayerProvider({ children }) {
     moveChannel,
     moveGroup,
     toggleFavorite,
+    channelMenu,
+    setChannelMenu,
+    openChannelMenu,
+    channelMenuItems,
+    runChannelMenuItem,
+    movingFavoriteId,
+    startFavoriteMove,
+    commitFavoriteMove,
+    moveFavorite,
     volume,
     muted,
     volumeTick,

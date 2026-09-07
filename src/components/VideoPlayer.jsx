@@ -12,6 +12,10 @@ export function VideoPlayer({ fullscreen = false }) {
   const now = useClock(1000)
   const {
     selectedChannel,
+    streamUrl,
+    playback,
+    playProgram,
+    seekArchive,
     focusZone,
     setFocusZone,
     setIsFullscreen,
@@ -36,12 +40,13 @@ export function VideoPlayer({ fullscreen = false }) {
   const nextProgram = getNextProgram(selectedChannel)
   const progress = getProgramProgress(program, now.getTime())
   const pauseForMulti = uiScreen === 'multiview' && !recordingActive
-  const { error, loading } = useHls(videoRef, pauseForMulti ? '' : selectedChannel?.url || '')
+  const { error, loading } = useHls(videoRef, pauseForMulti ? '' : streamUrl)
   const recorder = useRecorder(videoRef, selectedChannel, settings, updateSettings)
   const [showVolume, setShowVolume] = useState(false)
   const [recHint, setRecHint] = useState('')
   const [pipOn, setPipOn] = useState(false)
   const [padOn, setPadOn] = useState(false)
+  const [seekHud, setSeekHud] = useState(null)
   const lastPulse = useRef(0)
   const lastPip = useRef(0)
   const padTimer = useRef(0)
@@ -64,6 +69,49 @@ export function VideoPlayer({ fullscreen = false }) {
     window.addEventListener('mirefir:pad', onPad)
     return () => window.removeEventListener('mirefir:pad', onPad)
   }, [])
+
+  useEffect(() => {
+    const applySeek = (seconds) => {
+      const video = videoRef.current
+      const archive = playback?.mode === 'archive'
+      if (archive) {
+        if (seconds > 0 && playback.end && Date.now() < playback.end && video) {
+          const end = video.seekable.length ? video.seekable.end(video.seekable.length - 1) : video.duration
+          if (Number.isFinite(end) && video.currentTime + seconds <= end) {
+            video.currentTime = Math.min(end, Math.max(0, video.currentTime + seconds))
+          } else seekArchive(seconds)
+        } else if (seconds < 0 && video) {
+          const start = video.seekable.length ? video.seekable.start(0) : 0
+          if (video.currentTime + seconds >= start) video.currentTime = Math.max(start, video.currentTime + seconds)
+          else seekArchive(seconds)
+        } else seekArchive(seconds)
+        setSeekHud({ label: playback.title || 'Архив', at: Date.now() })
+        return
+      }
+      if (!video) return
+      if (seconds > 0) return
+      const start = video.seekable.length ? video.seekable.start(0) : Math.max(0, video.currentTime - 120)
+      const next = Math.max(start, video.currentTime + seconds)
+      if (next < video.currentTime - 0.2) {
+        video.currentTime = next
+        setSeekHud({ label: 'Эфир −30 сек', at: Date.now() })
+      } else if (selectedChannel) {
+        const from = Date.now() + seconds * 1000
+        playProgram(selectedChannel, { start: from, end: from + 60 * 60 * 1000, title: 'Эфир со сдвигом' })
+        setSeekHud({ label: 'Архив эфира', at: Date.now() })
+      }
+    }
+
+    const onSeek = (event) => applySeek(Number(event.detail?.seconds) || 0)
+    window.addEventListener('mirefir:seek', onSeek)
+    return () => window.removeEventListener('mirefir:seek', onSeek)
+  }, [playProgram, playback, seekArchive, selectedChannel])
+
+  useEffect(() => {
+    if (!seekHud) return undefined
+    const timer = window.setTimeout(() => setSeekHud(null), 1800)
+    return () => window.clearTimeout(timer)
+  }, [seekHud])
 
   useEffect(() => {
     if (!volumeTick) return undefined
@@ -192,7 +240,7 @@ export function VideoPlayer({ fullscreen = false }) {
               <div className="flex items-center gap-2 text-[13px] text-white/70">
                 <span className="inline-flex items-center gap-1 text-live">
                   <span className="live-dot h-1.5 w-1.5 rounded-full bg-live" />
-                  LIVE
+                  {playback?.mode === 'archive' ? 'АРХИВ' : 'LIVE'}
                 </span>
                 <span>{selectedChannel?.number}</span>
                 {recorder.active ? (
@@ -244,9 +292,17 @@ export function VideoPlayer({ fullscreen = false }) {
       </div>
       )}
 
+      {seekHud ? (
+        <div className="absolute bottom-28 left-1/2 z-30 -translate-x-1/2 rounded-xl bg-black/70 px-4 py-2 text-sm">
+          {seekHud.label}
+        </div>
+      ) : null}
+
       {liveGuideOpen || !padOn ? null : (
         <div className="absolute bottom-24 left-1/2 z-20 flex -translate-x-1/2 gap-2 rounded-2xl bg-black/55 p-2">
           {[
+            { id: 'back', label: '−30с', run: () => window.dispatchEvent(new CustomEvent('mirefir:seek', { detail: { seconds: -30 } })) },
+            { id: 'fwd', label: '+30с', run: () => window.dispatchEvent(new CustomEvent('mirefir:seek', { detail: { seconds: 30 } })) },
             { id: 'guide', label: 'Гид', run: toggleLiveGuide },
             { id: 'rec', label: recorder.active ? 'Стоп' : 'REC', run: toggleRecord },
             { id: 'pip', label: 'PiP', run: togglePip },
@@ -259,7 +315,22 @@ export function VideoPlayer({ fullscreen = false }) {
               className="remote-hit min-w-[76px] rounded-xl bg-white/12 px-3 text-sm font-medium hover:bg-accent"
               onClick={(event) => {
                 event.stopPropagation()
+                if (item.id === 'back' || item.id === 'fwd') return
                 item.run()
+              }}
+              onPointerDown={(event) => {
+                if (item.id !== 'back' && item.id !== 'fwd') return
+                event.preventDefault()
+                event.stopPropagation()
+                item.run()
+                const timer = window.setInterval(() => item.run(), 220)
+                const stop = () => {
+                  window.clearInterval(timer)
+                  window.removeEventListener('pointerup', stop)
+                  window.removeEventListener('pointercancel', stop)
+                }
+                window.addEventListener('pointerup', stop)
+                window.addEventListener('pointercancel', stop)
               }}
             >
               {item.label}
@@ -283,7 +354,7 @@ export function VideoPlayer({ fullscreen = false }) {
         ) : null}
         <div className="mt-2 text-[11px] text-white/35">
           {fullscreen || focusZone === 'player'
-            ? '← телепрограмма · P — окошко · R — запись · V — голос · ↑↓ канал'
+            ? '← телепрограмма · −30с/+30с · , и . — перемотка · P — окошко · R — запись'
             : 'Enter — на весь экран · ← гид · P — PiP · V — голос'}
         </div>
       </div>

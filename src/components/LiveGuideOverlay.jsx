@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  collectProgramDays,
+  collectGuideDays,
   formatDayShort,
   formatRange,
   formatRemaining,
@@ -8,7 +8,7 @@ import {
   programsOnDay,
   startOfDay,
 } from '../lib/epg.js'
-import { arrowDir, isBackKey, isOkKey } from '../lib/remoteKeys.js'
+import { arrowDir, isBackKey, isConfirmKey, isMenuKey } from '../lib/remoteKeys.js'
 import { useClock } from '../hooks/useClock.js'
 import { usePlayer } from '../store/PlayerContext.jsx'
 import { LogoMark } from './LogoMark.jsx'
@@ -34,9 +34,8 @@ function ArchiveMark({ visible }) {
 function DetailCard({ program, now }) {
   if (!program) {
     return (
-      <div className="m-4 w-[min(360px,30vw)] rounded-2xl bg-black/50 px-5 py-4 backdrop-blur-[2px]">
-        <div className="text-lg text-white/70">Нет описания</div>
-        <div className="mt-2 text-sm text-white/40">Для этого канала нет телепрограммы на выбранный день.</div>
+      <div className="w-[min(320px,28vw)] rounded-2xl bg-black/55 px-4 py-3 backdrop-blur-[2px]">
+        <div className="text-[16px] text-white/70">Нет описания</div>
       </div>
     )
   }
@@ -46,20 +45,18 @@ function DetailCard({ program, now }) {
   const live = program.start <= now.getTime() && now.getTime() < program.end
 
   return (
-    <div className="m-4 w-[min(380px,32vw)] rounded-2xl bg-black/50 px-5 py-4 backdrop-blur-[2px]">
-      <div className="text-[22px] font-semibold leading-tight">{program.title}</div>
-      <div className="mt-2 flex items-center gap-3 text-[13px] text-white/70">
+    <div className="w-[min(320px,28vw)] rounded-2xl bg-black/55 px-4 py-3 backdrop-blur-[2px]">
+      <div className="text-[18px] font-semibold leading-tight">{program.title}</div>
+      <div className="mt-1.5 flex items-center gap-2 text-[12px] text-white/70">
         <span>{formatRange(program.start, program.end)}</span>
-        {live ? (
-          <>
-            <span className="h-[3px] min-w-16 flex-1 overflow-hidden rounded-full bg-white/20">
-              <span className="block h-full bg-white" style={{ width: `${progress * 100}%` }} />
-            </span>
-            <span className="shrink-0 text-white/55">{remaining}</span>
-          </>
-        ) : null}
+        {live ? <span className="shrink-0 text-white/55">{remaining}</span> : null}
       </div>
-      {program.description ? <div className="mt-3 max-h-[42vh] overflow-y-auto text-[13px] leading-relaxed text-white/75">{program.description}</div> : null}
+      {live ? (
+        <div className="mt-2 h-[3px] overflow-hidden rounded-full bg-white/20">
+          <span className="block h-full bg-white" style={{ width: `${progress * 100}%` }} />
+        </div>
+      ) : null}
+      {program.description ? <div className="mt-2 text-[13px] leading-relaxed text-white/75">{program.description}</div> : null}
     </div>
   )
 }
@@ -78,10 +75,20 @@ export function LiveGuideOverlay() {
     selectedGroupId,
     selectChannel,
     selectGroup,
+    playProgram,
     getCurrentProgram,
     getPrograms,
     settings,
     favorites,
+    toggleFavorite,
+    channelMenu,
+    setChannelMenu,
+    openChannelMenu,
+    movingFavoriteId,
+    startFavoriteMove,
+    commitFavoriteMove,
+    moveFavorite,
+    goBack,
   } = usePlayer()
 
   const [groupId, setGroupId] = useState(selectedGroupId || 'all')
@@ -95,11 +102,13 @@ export function LiveGuideOverlay() {
   const channelRef = useRef(null)
   const programRef = useRef(null)
   const openedRef = useRef(false)
+  const okTimer = useRef(0)
+  const okHeld = useRef(false)
 
   const list = useMemo(() => {
     const hidden = settings.hiddenGroups || []
     let next = channels.filter((channel) => !hidden.includes(channel.group))
-    if (groupId === 'favorites') next = channels.filter((channel) => favorites.includes(channel.id))
+    if (groupId === 'favorites') next = favorites.map((id) => channels.find((channel) => channel.id === id)).filter(Boolean)
     else if (groupId === 'recent') next = (recentIds || []).map((id) => channels.find((channel) => channel.id === id)).filter(Boolean)
     else if (groupId && groupId !== 'all') next = next.filter((channel) => channel.group === groupId)
     return next
@@ -108,10 +117,34 @@ export function LiveGuideOverlay() {
   const activeGroup = groups.find((group) => group.id === groupId) || groups[0]
   const focusedChannel = list[channelCursor] || selectedChannel
   const allPrograms = useMemo(() => getPrograms(focusedChannel), [focusedChannel, getPrograms])
-  const days = useMemo(() => collectProgramDays(allPrograms, now.getTime()), [allPrograms, now])
+  const days = useMemo(
+    () =>
+      collectGuideDays({
+        programs: allPrograms,
+        now: now.getTime(),
+        archiveDays: settings.archiveDays,
+        archiveEnabled: settings.archiveEnabled,
+        catchupDays: focusedChannel?.catchupDays,
+        epgDays: settings.epgDays,
+      }),
+    [allPrograms, focusedChannel?.catchupDays, now, settings.archiveDays, settings.archiveEnabled, settings.epgDays],
+  )
   const selectedDay = days[dayCursor] || startOfDay(now.getTime())
   const dayPrograms = useMemo(() => programsOnDay(allPrograms, selectedDay), [allPrograms, selectedDay])
   const focusedProgram = dayPrograms[programCursor] || getCurrentProgram(focusedChannel)
+  const menuItems = (channel) => {
+    if (!channel) return []
+    const starred = favorites.includes(channel.id)
+    const items = [{ id: 'fav', title: starred ? 'Удалить из избранного' : 'Добавить в избранное' }]
+    if (groupId === 'favorites' && starred) items.push({ id: 'move', title: 'Переместить' })
+    return items
+  }
+
+  useEffect(() => {
+    if (!movingFavoriteId) return
+    const index = list.findIndex((channel) => channel.id === movingFavoriteId)
+    if (index >= 0) setChannelCursor(index)
+  }, [list, movingFavoriteId])
 
   useEffect(() => {
     if (!liveGuideView) {
@@ -123,7 +156,7 @@ export function LiveGuideOverlay() {
     const nextGroup = selectedGroupId || 'all'
     const hidden = settings.hiddenGroups || []
     let nextList = channels.filter((channel) => !hidden.includes(channel.group))
-    if (nextGroup === 'favorites') nextList = channels.filter((channel) => favorites.includes(channel.id))
+    if (nextGroup === 'favorites') nextList = favorites.map((id) => channels.find((channel) => channel.id === id)).filter(Boolean)
     else if (nextGroup === 'recent') nextList = (recentIds || []).map((id) => channels.find((channel) => channel.id === id)).filter(Boolean)
     else if (nextGroup !== 'all') nextList = nextList.filter((channel) => channel.group === nextGroup)
     setGroupId(nextGroup)
@@ -157,10 +190,11 @@ export function LiveGuideOverlay() {
   }, [focusedChannel?.id, selectedDay, liveGuideView])
 
   useEffect(() => {
-    const today = startOfDay(now.getTime())
+    if (!liveGuideView) return
+    const today = startOfDay(Date.now())
     const index = days.findIndex((day) => day === today)
     if (index >= 0) setDayCursor(index)
-  }, [days, liveGuideView, now])
+  }, [liveGuideView])
 
   useEffect(() => {
     const el = channelRef.current
@@ -196,11 +230,114 @@ export function LiveGuideOverlay() {
       })
     }
 
-    const onKey = (event) => {
-      const dir = arrowDir(event)
-      if (!(dir || isOkKey(event) || isBackKey(event) || event.key === settings.keys?.liveGuide)) return
+    const tuneChannel = (channel) => {
+      if (!channel) return
+      selectChannel(channel.id)
+    }
+
+    const openFav = (channel) => {
+      if (!channel) return
+      okHeld.current = true
+      openChannelMenu(channel, 0)
+    }
+
+    const runMenuItem = (channel, itemId) => {
+      setChannelMenu(null)
+      if (!channel || !itemId) return
+      if (itemId === 'fav') toggleFavorite(channel.id)
+      if (itemId === 'move') startFavoriteMove(channel.id)
+    }
+
+    const startOkHold = (channel) => {
+      okHeld.current = false
+      window.clearTimeout(okTimer.current)
+      okTimer.current = window.setTimeout(() => openFav(channel), 550)
+    }
+
+    const onKeyUp = (event) => {
+      if (!isConfirmKey(event)) return
+      window.clearTimeout(okTimer.current)
+      if (okHeld.current) return
       event.preventDefault()
       event.stopPropagation()
+      if (movingFavoriteId) {
+        commitFavoriteMove()
+        return
+      }
+      if (channelMenu) {
+        const channel = channels.find((item) => item.id === channelMenu.channelId) || focusedChannel
+        const items = menuItems(channel)
+        runMenuItem(channel, items[channelMenu.cursor]?.id)
+        return
+      }
+      if (liveGuideView === 'schedule' && focusCol === 'programs') {
+        playProgram(focusedChannel, focusedProgram)
+        return
+      }
+      if (liveGuideView === 'categories' || liveGuideView === 'groups') {
+        const inGroups = liveGuideView === 'groups' || focusCol === 'groups'
+        if (inGroups) {
+          const group = groups[groupCursor]
+          if (group) {
+            setGroupId(group.id)
+            selectGroup(group.id)
+            setLiveGuideView('categories')
+            setFocusCol('channels')
+            setChannelCursor(0)
+          }
+          return
+        }
+      }
+      tuneChannel(focusedChannel)
+    }
+
+    const onKey = (event) => {
+      const dir = arrowDir(event)
+      const menuPressed = isMenuKey(event) || event.key === settings.keys?.menu
+      if (!(dir || isConfirmKey(event) || isBackKey(event) || menuPressed || event.key === settings.keys?.liveGuide)) return
+      event.preventDefault()
+      event.stopPropagation()
+
+      if (movingFavoriteId) {
+        if (dir === 'up' || dir === 'down') {
+          moveFavorite(movingFavoriteId, dir === 'down' ? 1 : -1)
+          return
+        }
+        if (isConfirmKey(event)) return
+        if (isBackKey(event) || menuPressed) {
+          goBack()
+        }
+        return
+      }
+
+      if (channelMenu) {
+        const channel = channels.find((item) => item.id === channelMenu.channelId) || focusedChannel
+        const items = menuItems(channel)
+        if (dir === 'up' || dir === 'down') {
+          const step = dir === 'down' ? 1 : -1
+          setChannelMenu((current) => ({
+            ...current,
+            cursor: wrapIndex((current?.cursor || 0) + step, items.length || 1),
+          }))
+          return
+        }
+        if (isBackKey(event) || dir === 'left' || menuPressed) {
+          setChannelMenu(null)
+          return
+        }
+        if (isConfirmKey(event) && !event.repeat) startOkHold(channel)
+        return
+      }
+
+      if (menuPressed) {
+        openFav(focusedChannel)
+        return
+      }
+
+      if (isConfirmKey(event)) {
+        if (!event.repeat) startOkHold(focusedChannel)
+        return
+      }
 
       if (isBackKey(event)) {
         if (liveGuideView === 'groups') {
@@ -225,11 +362,7 @@ export function LiveGuideOverlay() {
           setFocusCol('programs')
           return
         }
-        if (dir === 'up' || dir === 'down') {
-          moveChannel(dir === 'down' ? 1 : -1)
-          return
-        }
-        if (isOkKey(event) && focusedChannel) selectChannel(focusedChannel.id)
+        if (dir === 'up' || dir === 'down') moveChannel(dir === 'down' ? 1 : -1)
         return
       }
 
@@ -266,19 +399,6 @@ export function LiveGuideOverlay() {
               return next
             })
           } else moveChannel(step)
-          return
-        }
-        if (isOkKey(event)) {
-          if (inGroups) {
-            const group = groups[groupCursor]
-            if (group) {
-              setGroupId(group.id)
-              selectGroup(group.id)
-              setLiveGuideView('categories')
-              setFocusCol('channels')
-              setChannelCursor(0)
-            }
-          } else if (focusedChannel) selectChannel(focusedChannel.id)
         }
         return
       }
@@ -297,28 +417,46 @@ export function LiveGuideOverlay() {
           const step = dir === 'down' ? 1 : -1
           if (focusCol === 'days') setDayCursor((current) => wrapIndex(current + step, days.length))
           else setProgramCursor((current) => wrapIndex(current + step, dayPrograms.length))
-          return
         }
-        if (isOkKey(event) && focusedChannel) selectChannel(focusedChannel.id)
       }
     }
 
     window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
+    window.addEventListener('keyup', onKeyUp, true)
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('keyup', onKeyUp, true)
+      window.clearTimeout(okTimer.current)
+    }
   }, [
+    channelMenu,
+    channels,
+    commitFavoriteMove,
     dayPrograms.length,
     days.length,
     focusCol,
     focusedChannel,
+    focusedProgram,
     groupCursor,
+    groupId,
     groups,
     list.length,
-    openMenu,
     liveGuideView,
+    moveFavorite,
+    movingFavoriteId,
+    openChannelMenu,
+    openMenu,
+    playProgram,
     selectChannel,
     selectGroup,
+    setChannelMenu,
     setLiveGuideView,
     settings.keys?.liveGuide,
+    settings.keys?.menu,
+    startFavoriteMove,
+    toggleFavorite,
+    goBack,
+    favorites,
   ])
 
   if (!liveGuideView) return null
@@ -351,8 +489,14 @@ export function LiveGuideOverlay() {
                 setChannelCursor(index)
                 selectChannel(channel.id)
               }}
+              onMouseEnter={() => setChannelCursor(index)}
+              onContextMenu={(event) => {
+                event.preventDefault()
+                setChannelCursor(index)
+                openChannelMenu(channel, 0)
+              }}
               className={`remote-hit absolute right-0 left-0 flex items-center gap-3 rounded-lg px-2 text-left ${
-                hovered ? 'bg-accent/70' : watching ? 'bg-white/10' : 'hover:bg-white/8'
+                movingFavoriteId === channel.id ? 'fav-moving' : hovered ? 'bg-accent/70' : watching ? 'bg-white/10' : 'hover:bg-white/8'
               }`}
             >
               <LogoMark name={channel.name} logo={channel.logo} size={40} />
@@ -382,7 +526,7 @@ export function LiveGuideOverlay() {
 
   return (
     <div className="fixed inset-0 z-[45]" onClick={() => setLiveGuideOpen(false)}>
-      <div className="flex h-full items-stretch" onClick={(event) => event.stopPropagation()}>
+      <div className="relative flex h-full items-stretch" onClick={(event) => event.stopPropagation()}>
         {liveGuideView === 'categories' || liveGuideView === 'groups' ? (
           <aside className="flex w-[min(220px,22vw)] flex-col bg-black/40 backdrop-blur-[2px]">
             <div className="px-4 py-3 text-[15px] font-medium text-sky-300">{activeGroup?.name}</div>
@@ -467,7 +611,14 @@ export function LiveGuideOverlay() {
                     <button
                       key={program.id || program.start}
                       type="button"
-                      onClick={() => setProgramCursor(index)}
+                      onClick={() => {
+                        setProgramCursor(index)
+                        playProgram(focusedChannel, program)
+                      }}
+                      onMouseEnter={() => {
+                        setProgramCursor(index)
+                        setFocusCol('programs')
+                      }}
                       className={`remote-hit mb-0.5 flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-[14px] ${
                         hovered ? 'bg-accent/75' : current ? 'bg-white/10' : 'text-white/75 hover:bg-white/8'
                       }`}
@@ -509,7 +660,35 @@ export function LiveGuideOverlay() {
           </>
         ) : null}
 
-        {liveGuideView === 'channels' || liveGuideView === 'schedule' ? <DetailCard program={focusedProgram} now={now} /> : null}
+        {liveGuideView === 'channels' || liveGuideView === 'schedule' ? (
+          <div className="pointer-events-none absolute top-5 right-5 z-10">
+            <DetailCard program={focusedProgram} now={now} />
+          </div>
+        ) : null}
+        {channelMenu ? (
+          <div className="absolute top-24 left-[min(420px,40vw)] z-30 min-w-[240px] rounded-xl border border-white/15 bg-[#10151e] p-2 shadow-2xl">
+            <div className="px-3 py-1 text-[12px] text-white/40">
+              {(channels.find((item) => item.id === channelMenu.channelId) || focusedChannel)?.displayName}
+            </div>
+            {menuItems(channels.find((item) => item.id === channelMenu.channelId) || focusedChannel).map((item, index) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`remote-hit mb-0.5 w-full rounded-lg px-3 py-2 text-left text-[14px] ${
+                  index === channelMenu.cursor ? 'bg-accent/80' : 'hover:bg-white/8'
+                }`}
+                onClick={() => {
+                  const channel = channels.find((entry) => entry.id === channelMenu.channelId) || focusedChannel
+                  setChannelMenu(null)
+                  if (item.id === 'fav') toggleFavorite(channel.id)
+                  if (item.id === 'move') startFavoriteMove(channel.id)
+                }}
+              >
+                {item.title}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
     </div>
   )

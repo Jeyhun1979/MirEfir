@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import {
   arrowDir,
   channelDelta,
@@ -10,11 +10,17 @@ import {
   isSearchKey,
   isTypingTarget,
   matchesBinding,
+  seekDelta,
   volumeDelta,
 } from '../lib/remoteKeys.js'
 import { usePlayer } from '../store/PlayerContext.jsx'
 
 const ZONES = ['groups', 'channels', 'player']
+
+function wrapIndex(index, length) {
+  if (!length) return 0
+  return (index + length) % length
+}
 
 export function useKeyboardNav() {
   const {
@@ -30,6 +36,7 @@ export function useKeyboardNav() {
     moveChannel,
     moveGroup,
     selectedChannel,
+    channels,
     toggleFavorite,
     nudgeVolume,
     toggleMute,
@@ -40,9 +47,63 @@ export function useKeyboardNav() {
     liveGuideOpen,
     goBack,
     settings,
+    selectedGroupId,
+    channelMenu,
+    setChannelMenu,
+    openChannelMenu,
+    channelMenuItems,
+    runChannelMenuItem,
+    movingFavoriteId,
+    moveFavorite,
+    commitFavoriteMove,
   } = usePlayer()
 
+  const okTimer = useRef(0)
+  const okHeld = useRef(false)
+
   useEffect(() => {
+    const clearOkHold = () => window.clearTimeout(okTimer.current)
+
+    const startOkHold = () => {
+      if (liveGuideOpen || !selectedChannel) return
+      okHeld.current = false
+      clearOkHold()
+      okTimer.current = window.setTimeout(() => {
+        okHeld.current = true
+        openChannelMenu(selectedChannel, 0)
+      }, 550)
+    }
+
+    const shortOk = () => {
+      if (!selectedChannel) return
+      if (isFullscreen) {
+        window.dispatchEvent(new Event('mirefir:pad'))
+        return
+      }
+      setIsFullscreen(true)
+    }
+
+    const onKeyUp = (event) => {
+      if (liveGuideOpen || isTypingTarget(event.target)) return
+      if (!isOkKey(event) && !matchesBinding(event, settings.keys?.fullscreen)) return
+      clearOkHold()
+      if (okHeld.current) return
+      event.preventDefault()
+      if (movingFavoriteId) {
+        commitFavoriteMove()
+        return
+      }
+      if (channelMenu) {
+        const channel = channels.find((item) => item.id === channelMenu.channelId) || selectedChannel
+        const items = channelMenuItems(channel)
+        const item = items[channelMenu.cursor] || items[0]
+        runChannelMenuItem(channel, item?.id)
+        return
+      }
+      if (uiScreen || isModalOpen) return
+      shortOk()
+    }
+
     const onKeyDown = (event) => {
       const keys = settings.keys || {}
       const typing = isTypingTarget(event.target)
@@ -67,6 +128,47 @@ export function useKeyboardNav() {
 
       if (isModalOpen) return
 
+      if (movingFavoriteId && !typing) {
+        const dir = arrowDir(event)
+        if (dir === 'up' || dir === 'down') {
+          event.preventDefault()
+          moveFavorite(movingFavoriteId, dir === 'down' ? 1 : -1)
+          return
+        }
+        if (isOkKey(event)) {
+          event.preventDefault()
+          return
+        }
+        if (dir || isMenuKey(event) || matchesBinding(event, keys.menu)) {
+          event.preventDefault()
+          return
+        }
+      }
+
+      if (channelMenu && !liveGuideOpen && !typing) {
+        const dir = arrowDir(event)
+        const channel = channels.find((item) => item.id === channelMenu.channelId) || selectedChannel
+        const items = channelMenuItems(channel)
+        if (dir === 'up' || dir === 'down') {
+          event.preventDefault()
+          setChannelMenu((current) =>
+            current
+              ? { ...current, cursor: wrapIndex((current.cursor || 0) + (dir === 'down' ? 1 : -1), items.length || 1) }
+              : current,
+          )
+          return
+        }
+        if (isOkKey(event)) {
+          event.preventDefault()
+          return
+        }
+        if (isMenuKey(event) || matchesBinding(event, keys.menu)) {
+          event.preventDefault()
+          setChannelMenu(null)
+          return
+        }
+      }
+
       const vol = volumeDelta(event)
       if (vol && !typing) {
         event.preventDefault()
@@ -76,8 +178,19 @@ export function useKeyboardNav() {
 
       if (liveGuideOpen) return
 
+      const seek = seekDelta(event)
+      if (seek && selectedChannel && !typing) {
+        event.preventDefault()
+        window.dispatchEvent(new CustomEvent('mirefir:seek', { detail: { seconds: seek, hold: event.repeat } }))
+        return
+      }
+
       if ((isMenuKey(event) || matchesBinding(event, keys.menu)) && !typing) {
         event.preventDefault()
+        if (selectedChannel && selectedGroupId === 'favorites') {
+          openChannelMenu(selectedChannel, 0)
+          return
+        }
         openMenu()
         return
       }
@@ -133,12 +246,8 @@ export function useKeyboardNav() {
       if (isOkKey(event) || matchesBinding(event, keys.fullscreen)) {
         if (typing) return
         event.preventDefault()
-        if (!selectedChannel) return
-        if (isFullscreen) {
-          window.dispatchEvent(new Event('mirefir:pad'))
-          return
-        }
-        setIsFullscreen(true)
+        if (!selectedChannel || event.repeat) return
+        startOkHold()
         return
       }
 
@@ -172,22 +281,37 @@ export function useKeyboardNav() {
     }
 
     window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      clearOkHold()
+    }
   }, [
+    channelMenu,
+    channelMenuItems,
+    channels,
     closeOverlays,
+    commitFavoriteMove,
     focusZone,
     goBack,
     isFullscreen,
     isModalOpen,
     liveGuideOpen,
     moveChannel,
+    moveFavorite,
     moveGroup,
+    movingFavoriteId,
     nudgeVolume,
+    openChannelMenu,
     openMenu,
     requestPip,
     requestRecord,
     requestVoiceSearch,
+    runChannelMenuItem,
     selectedChannel,
+    selectedGroupId,
+    setChannelMenu,
     setFocusZone,
     setIsFullscreen,
     setUiScreen,

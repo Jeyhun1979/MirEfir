@@ -28,8 +28,21 @@ export function isBackKey(event) {
 }
 
 export function isOkKey(event) {
-  const { key, keyCode } = event
-  return key === 'Enter' || key === 'NumpadEnter' || key === 'Select' || keyCode === 23 || keyCode === 66
+  const { key, code, keyCode } = event
+  return (
+    key === 'Enter' ||
+    key === 'NumpadEnter' ||
+    key === 'Select' ||
+    code === 'Enter' ||
+    code === 'NumpadEnter' ||
+    keyCode === 13 ||
+    keyCode === 23 ||
+    keyCode === 66
+  )
+}
+
+export function isConfirmKey(event) {
+  return isOkKey(event) || event.key === ' ' || event.code === 'Space' || event.keyCode === 32
 }
 
 export function isMenuKey(event) {
@@ -54,6 +67,15 @@ export function volumeDelta(event) {
   const { key, code, keyCode } = event
   if (key === 'AudioVolumeUp' || keyCode === 24 || key === '+' || key === '=' || key === 'Add' || code === 'NumpadAdd') return 1
   if (key === 'AudioVolumeDown' || keyCode === 25 || key === '-' || key === '_' || key === 'Subtract' || code === 'NumpadSubtract') return -1
+  return 0
+}
+
+export function seekDelta(event) {
+  const { key, code, keyCode } = event
+  if (key === 'MediaRewind' || key === 'SeekBackward' || code === 'MediaRewind' || keyCode === 412 || keyCode === 227 || key === ',' || key === '<')
+    return -30
+  if (key === 'MediaFastForward' || key === 'SeekForward' || code === 'MediaFastForward' || keyCode === 417 || keyCode === 228 || key === '.' || key === '>')
+    return 30
   return 0
 }
 

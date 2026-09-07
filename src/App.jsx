@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { App as CapApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
 import { StatusBar, Style } from '@capacitor/status-bar'
-import { ChannelList } from './components/ChannelList.jsx'
+import { ChannelList, ChannelActionMenu } from './components/ChannelList.jsx'
 import { EpgTimeline } from './components/EpgTimeline.jsx'
 import { PlaylistModal } from './components/PlaylistModal.jsx'
 import { UpdateDialog } from './components/UpdateDialog.jsx'
@@ -58,6 +58,7 @@ export default function App() {
       <SettingsScreen />
       <SearchOverlay />
       <LiveGuideOverlay />
+      <ChannelActionMenu />
       <ExitPrompt />
       <RecordingsScreen />
       <MultiViewScreen />

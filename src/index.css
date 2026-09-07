@@ -73,9 +73,18 @@ textarea {
   border-radius: 99px;
 }
 
-.focus-tile {
-  outline: none;
-  box-shadow: 0 0 0 2px #2f7cf6, 0 0 22px rgba(47, 124, 246, 0.35);
+.fav-moving {
+  animation: fav-move-pulse 0.85s ease-in-out infinite;
+}
+
+@keyframes fav-move-pulse {
+  0%,
+  100% {
+    filter: brightness(1.45);
+  }
+  50% {
+    filter: brightness(0.7);
+  }
 }
 
 .epg-now-line {

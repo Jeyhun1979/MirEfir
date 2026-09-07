@@ -136,6 +136,13 @@ export function buildBackup(extra = {}) {
     playlistUrl: localStorage.getItem('mirefir.playlistUrl'),
     playlistText: localStorage.getItem('mirefir.playlistText'),
     epgUrl: localStorage.getItem('mirefir.epgUrl'),
+    session: (() => {
+      try {
+        return JSON.parse(localStorage.getItem('mirefir.session') || 'null')
+      } catch {
+        return null
+      }
+    })(),
     ...extra,
   }
 }
@@ -158,6 +165,7 @@ export function applyBackup(data) {
   if (data.playlistUrl) localStorage.setItem('mirefir.playlistUrl', data.playlistUrl)
   if (data.playlistText) localStorage.setItem('mirefir.playlistText', data.playlistText)
   if (data.epgUrl) localStorage.setItem('mirefir.epgUrl', data.epgUrl)
+  if (data.session) localStorage.setItem('mirefir.session', JSON.stringify(data.session))
   queuePersistFile()
 }
 
