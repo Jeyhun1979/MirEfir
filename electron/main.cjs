@@ -20,39 +20,32 @@ function collectLegacyProfiles() {
   const found = []
   const portableDir = process.env.PORTABLE_EXECUTABLE_DIR
   if (portableDir) found.push(path.join(portableDir, 'MirEfir-data'))
-  const roots = [app.getPath('desktop'), app.getPath('documents'), app.getPath('downloads')]
-  for (const root of roots) {
-    found.push(path.join(root, 'MirEfir-data'))
-    try {
-      for (const name of fs.readdirSync(root)) {
-        if (/^mirefir-data$/i.test(name)) found.push(path.join(root, name))
-        if (/mirefir.*\.exe$/i.test(name)) found.push(path.join(root, 'MirEfir-data'))
-      }
-    } catch {
-      /* folder missing */
-    }
-  }
+  found.push(path.join(app.getPath('desktop'), 'MirEfir-data'))
+  found.push(path.join(app.getPath('documents'), 'MirEfir-data'))
+  found.push(path.join(app.getPath('downloads'), 'MirEfir-data'))
   return [...new Set(found)]
 }
 
 const stableUserData = path.join(app.getPath('appData'), 'MirEfir')
-if (!profileHasData(stableUserData)) {
+app.setPath('userData', stableUserData)
+
+function migrateLegacyProfile() {
+  if (profileHasData(stableUserData)) return
   for (const dir of collectLegacyProfiles()) {
     if (!profileHasData(dir)) continue
     try {
       fs.mkdirSync(stableUserData, { recursive: true })
       fs.cpSync(dir, stableUserData, { recursive: true, force: false })
-      break
+      return
     } catch {
       /* try next folder */
     }
   }
 }
-app.setPath('userData', stableUserData)
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
-  app.quit()
+  app.exit(0)
 } else {
   app.on('second-instance', () => {
     const win = BrowserWindow.getAllWindows()[0]
@@ -65,6 +58,14 @@ if (!gotLock) {
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
+function forceQuit() {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.removeAllListeners('close')
+    if (!win.isDestroyed()) win.destroy()
+  }
+  app.exit(0)
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1680,
@@ -74,7 +75,7 @@ function createWindow() {
     backgroundColor: '#06070a',
     title: 'MirEfir',
     autoHideMenuBar: true,
-    show: false,
+    show: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -83,7 +84,9 @@ function createWindow() {
     },
   })
 
-  win.once('ready-to-show', () => win.show())
+  win.on('closed', () => {
+    if (process.platform !== 'darwin') forceQuit()
+  })
 
   if (!app.isPackaged) {
     win.loadURL(DEV_URL)
@@ -94,6 +97,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   if (!gotLock) return
+  migrateLegacyProfile()
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
     const headers = { ...details.requestHeaders }
     if (!headers['User-Agent'] && !headers['user-agent']) {
@@ -111,7 +115,7 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  if (process.platform !== 'darwin') forceQuit()
 })
 
 ipcMain.handle('storage:internal-folder', async () => {
@@ -191,7 +195,7 @@ ipcMain.handle('shell:open-external', async (_event, href) => {
 })
 
 ipcMain.handle('app:quit', () => {
-  app.quit()
+  forceQuit()
 })
 
 ipcMain.handle('config:load', async () => {

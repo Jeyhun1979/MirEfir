@@ -210,15 +210,17 @@ export function PlayerProvider({ children }) {
     [channels, selectedChannelId, visibleChannels],
   )
 
-  const applyPlaylist = useCallback(async (parsed) => {
+  const applyPlaylist = useCallback(async (parsed, opts = {}) => {
     setPlaylistName(parsed.name)
     const restored = restoreFromSession(parsed.channels, parsed.groups || collectGroups(parsed.channels), readSession())
     setListMode(restored.listMode)
     setSelectedGroupId(restored.groupId)
     setSelectedChannelId(restored.channelId)
-    setFocusZone('channels')
-    setIsFullscreen(false)
-    setError('')
+    if (!opts.silent) {
+      setFocusZone('channels')
+      setIsFullscreen(false)
+      setError('')
+    }
 
     if (xmltvRef.current) {
       const bound = bindEpgToChannels(parsed.channels, xmltvRef.current)
@@ -236,7 +238,6 @@ export function PlayerProvider({ children }) {
 
   const persistPlaylistUrl = useCallback((url) => {
     localStorage.setItem(PLAYLIST_URL_KEY, url)
-    localStorage.removeItem(PLAYLIST_TEXT_KEY)
     setPlaylistUrl(url)
     setSettingsState((current) => {
       const next = {
@@ -266,6 +267,10 @@ export function PlayerProvider({ children }) {
       setStatus('Загрузка плейлиста…')
       const parsed = await loadPlaylistFromUrl(url)
       persistPlaylistUrl(url)
+      if (parsed.rawText) {
+        localStorage.setItem(PLAYLIST_TEXT_KEY, parsed.rawText)
+        queuePersistFile()
+      }
       await applyPlaylist(parsed)
       return parsed
     },
@@ -752,18 +757,38 @@ export function PlayerProvider({ children }) {
         return
       }
 
-      setStatus('Загрузка плейлиста…')
+      if (savedText) {
+        try {
+          await applyPlaylist(parseM3U(savedText, 'Плейлист'))
+        } catch {
+          /* cache unreadable — try the URL */
+        }
+      } else {
+        setStatus('Загрузка плейлиста…')
+      }
+
       try {
-        const parsed = url ? await loadPlaylistFromUrl(url) : parseM3U(savedText, 'Плейлист')
-        await applyPlaylist(parsed)
+        if (url) {
+          const parsed = await loadPlaylistFromUrl(url)
+          if (parsed.rawText) {
+            localStorage.setItem(PLAYLIST_TEXT_KEY, parsed.rawText)
+            queuePersistFile()
+          }
+          persistPlaylistUrl(url)
+          await applyPlaylist(parsed, { silent: Boolean(savedText) })
+        } else if (!savedText) {
+          throw new Error('no playlist')
+        }
         const guide = readEpgUrl() || loadSettings().epgUrl
         if (!guide) return
-        try {
-          await importEpg(guide)
-        } catch (err) {
+        importEpg(guide).catch((err) => {
           setError(err.message || 'Не удалось загрузить телепрограмму. Её можно добавить позже.')
-        }
+        })
       } catch {
+        if (savedText) {
+          setStatus('Плейлист из памяти. Обновление по ссылке не удалось')
+          return
+        }
         setStatus('Плейлист сохранён, повторная загрузка не удалась')
         setError('Не удалось открыть плейлист. Ссылка или файл уже сохранены — повторите позже, вводить заново не нужно.')
       }

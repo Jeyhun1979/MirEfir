@@ -185,7 +185,9 @@ export async function loadPlaylistFromUrl(url) {
       name = 'Мой плейлист'
     }
   }
-  return parseM3U(text, name)
+  const parsed = parseM3U(text, name)
+  parsed.rawText = text
+  return parsed
 }
 
 export async function loadPlaylistFromFile(file) {

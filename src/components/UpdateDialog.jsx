@@ -10,6 +10,7 @@ export function UpdateDialog() {
 
   useEffect(() => {
     const start = async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 4000))
       try {
         const info = await window.mirefir?.appInfo?.()
         if (info?.packaged && window.mirefir?.checkUpdate) {

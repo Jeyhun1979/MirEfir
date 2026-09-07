@@ -139,7 +139,13 @@ function applyDownloadedFile(filePath) {
   lines.push('del "%~f0" >nul 2>&1')
   fs.writeFileSync(bat, lines.join('\r\n'), 'utf8')
   spawn('cmd.exe', ['/c', bat], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
-  app.quit()
+  setTimeout(() => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.removeAllListeners('close')
+      if (!win.isDestroyed()) win.destroy()
+    }
+    app.exit(0)
+  }, 400)
   return true
 }
 

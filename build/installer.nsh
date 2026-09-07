@@ -1,9 +1,18 @@
+!macro KillMirEfir
+  ExecWait '"$SYSDIR\taskkill.exe" /F /IM MirEfir.exe /T'
+  Sleep 2500
+  ExecWait '"$SYSDIR\taskkill.exe" /F /IM MirEfir.exe /T'
+  Sleep 1500
+!macroend
+
+!macro preInit
+  !insertmacro KillMirEfir
+!macroend
+
 !macro customInit
-  ExecWait 'taskkill /F /IM MirEfir.exe /T'
-  Sleep 2000
+  !insertmacro KillMirEfir
 !macroend
 
 !macro customCheckAppRunning
-  ExecWait 'taskkill /F /IM MirEfir.exe /T'
-  Sleep 2000
+  !insertmacro KillMirEfir
 !macroend
