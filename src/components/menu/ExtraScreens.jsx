@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { StreamTile } from '../player/StreamTile.jsx'
 import { formatBytes, listStoredRecordings, recordingPlayUrl } from '../../lib/storage.js'
+import { arrowDir, isOkKey } from '../../lib/remoteKeys.js'
 import { usePlayer } from '../../store/PlayerContext.jsx'
 
 function readLocalRecordings() {
@@ -237,6 +238,98 @@ export function MultiViewScreen() {
           </div>
         </div>
       ) : null}
+    </div>
+  )
+}
+
+export function HistoryScreen() {
+  const { uiScreen, closeOverlays, openMenu, watchHistory, clearHistory, selectChannel, channels } = usePlayer()
+  const [cursor, setCursor] = useState(0)
+
+  const items = watchHistory || []
+
+  useEffect(() => {
+    if (uiScreen === 'history') setCursor(0)
+  }, [uiScreen])
+
+  useEffect(() => {
+    if (uiScreen !== 'history') return undefined
+    const onKey = (event) => {
+      const dir = arrowDir(event)
+      if (dir === 'up' || dir === 'down') {
+        event.preventDefault()
+        event.stopPropagation()
+        if (!items.length) return
+        setCursor((current) => (current + (dir === 'down' ? 1 : -1) + items.length) % items.length)
+        return
+      }
+      if (isOkKey(event) && items[cursor]) {
+        event.preventDefault()
+        event.stopPropagation()
+        selectChannel(items[cursor].id)
+        closeOverlays()
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [closeOverlays, cursor, items, selectChannel, uiScreen])
+
+  if (uiScreen !== 'history') return null
+
+  const openItem = (item) => {
+    const exists = channels.find((channel) => channel.id === item.id)
+    if (!exists) return
+    selectChannel(item.id)
+    closeOverlays()
+  }
+
+  return (
+    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/75 p-6" onClick={closeOverlays}>
+      <div
+        className="flex max-h-[86vh] w-full max-w-lg flex-col rounded-2xl border border-white/10 bg-[#10151e] p-6"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="mb-1 text-xl font-semibold">История</div>
+        <p className="mb-4 text-sm text-white/45">Последние 10 каналов. Назад — в меню.</p>
+        <div className="scroll-thin min-h-0 flex-1 space-y-1 overflow-y-auto">
+          {items.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-white/10 px-4 py-10 text-center text-sm text-white/35">
+              История пуста. Переключите канал — он появится здесь.
+            </div>
+          ) : (
+            items.map((item, index) => (
+              <button
+                key={`${item.id}-${item.at}`}
+                type="button"
+                onMouseEnter={() => setCursor(index)}
+                onClick={() => openItem(item)}
+                className={`remote-hit flex w-full items-center justify-between rounded-xl px-4 py-3 text-left ${
+                  index === cursor ? 'bg-accent text-white' : 'bg-white/5 hover:bg-white/8'
+                }`}
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-sm">{item.name || 'Канал'}</div>
+                  <div className={`truncate text-xs ${index === cursor ? 'text-white/70' : 'text-white/40'}`}>
+                    {item.program || 'Прямой эфир'}
+                    {item.at ? ` · ${new Date(item.at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` : ''}
+                  </div>
+                </div>
+              </button>
+            ))
+          )}
+        </div>
+        <div className="mt-5 flex gap-2">
+          <button type="button" className="rounded-lg bg-white/10 px-4 py-2 text-sm" onClick={clearHistory} disabled={!items.length}>
+            Очистить историю
+          </button>
+          <button type="button" className="rounded-lg bg-accent px-4 py-2 text-sm" onClick={openMenu}>
+            Меню
+          </button>
+          <button type="button" className="rounded-lg bg-white/10 px-4 py-2 text-sm" onClick={closeOverlays}>
+            Закрыть
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

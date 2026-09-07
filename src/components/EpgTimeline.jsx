@@ -5,16 +5,15 @@ import { usePlayer } from '../store/PlayerContext.jsx'
 import { LogoMark } from './LogoMark.jsx'
 
 const PX_PER_MIN = 3.4
-const DEFAULT_HOURS = 18
 const ROW_H = 44
 const HEADER_H = 32
 const LABEL_W = 188
 const VIEW_H = 268 - HEADER_H
+const HOURS = 24
 
 export function EpgTimeline() {
   const now = useClock(30000)
-  const { visibleChannels, selectedChannel, selectChannel, getPrograms, settings } = usePlayer()
-  const HOURS = settings.guideHours || DEFAULT_HOURS
+  const { visibleChannels, selectedChannel, selectChannel, getPrograms } = usePlayer()
   const scrollerRef = useRef(null)
   const [scrollTop, setScrollTop] = useState(0)
 

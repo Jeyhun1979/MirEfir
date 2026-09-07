@@ -111,11 +111,16 @@ textarea {
   }
 }
 
-.player-spinner {
-  width: 46px;
-  height: 46px;
-  border: 3px solid rgba(255, 255, 255, 0.16);
-  border-top-color: #2f7cf6;
-  border-radius: 50%;
-  animation: player-spin 0.7s linear infinite;
+.epg-marquee {
+  padding-left: 100%;
+  animation: epg-marquee 9s linear infinite;
+}
+
+@keyframes epg-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-100%);
+  }
 }

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { APP_VERSION } from '../../lib/appInfo.js'
 import { copyText, shareCloudCode } from '../../lib/cloudCode.js'
-import { eventToken, keyCaption } from '../../lib/remoteKeys.js'
-import { ARCHIVE_DAYS, CLOCK_POSITIONS, CLOCK_SIZES, DEFAULT_SETTINGS, KEY_LABELS, saveSettings } from '../../lib/settingsStore.js'
+import { eventToken, keyCaption, arrowDir, isBackKey, isTypingTarget } from '../../lib/remoteKeys.js'
+import { ARCHIVE_DAYS, CLOCK_POSITIONS, CLOCK_SIZES, DEFAULT_SETTINGS, KEY_LABELS, enabledEpgUrls, normalizeEpgSources, saveSettings } from '../../lib/settingsStore.js'
 import { pickStorageFolder } from '../../lib/storage.js'
 import { usePlayer } from '../../store/PlayerContext.jsx'
 
@@ -54,10 +54,10 @@ export function SettingsScreen() {
     settings,
     updateSettings,
     playlistUrl,
-    epgUrl,
     playlistGroups,
     importFromUrl,
     importEpg,
+    upsertEpgSource,
     exportBackup,
     exportCloudCode,
     importCloudCode,
@@ -75,13 +75,42 @@ export function SettingsScreen() {
   const [busy, setBusy] = useState('')
   const [capturing, setCapturing] = useState('')
   const restoreRef = useRef(null)
+  const tabRefs = useRef([])
   const [cloudCode, setCloudCode] = useState('')
   const [cloudNote, setCloudNote] = useState('')
 
   useEffect(() => {
     setPlaylistDraft(playlistUrl || '')
-    setEpgDraft(settings.epgUrl || epgUrl || '')
-  }, [epgUrl, playlistUrl, settings.epgUrl, uiScreen])
+    setEpgDraft('')
+  }, [playlistUrl, uiScreen])
+
+  useEffect(() => {
+    const index = TABS.findIndex((tab) => tab.id === settingsTab)
+    tabRefs.current[index]?.scrollIntoView({ block: 'nearest' })
+  }, [settingsTab])
+
+  useEffect(() => {
+    if (uiScreen !== 'settings' || capturing) return undefined
+    const onKey = (event) => {
+      if (isTypingTarget(event.target)) return
+      const dir = arrowDir(event)
+      if (dir === 'up' || dir === 'down') {
+        event.preventDefault()
+        event.stopPropagation()
+        const index = Math.max(0, TABS.findIndex((tab) => tab.id === settingsTab))
+        const next = TABS[(index + (dir === 'down' ? 1 : -1) + TABS.length) % TABS.length]
+        setSettingsTab(next.id)
+        return
+      }
+      if (isBackKey(event)) {
+        event.preventDefault()
+        event.stopPropagation()
+        openMenu()
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [capturing, openMenu, setSettingsTab, settingsTab, uiScreen])
 
   useEffect(() => {
     if (!capturing) return undefined
@@ -138,9 +167,12 @@ export function SettingsScreen() {
           ‹ Меню
         </button>
         <div className="scroll-thin flex-1 overflow-y-auto pb-4">
-          {TABS.map((tab) => (
+          {TABS.map((tab, index) => (
             <button
               key={tab.id}
+              ref={(node) => {
+                tabRefs.current[index] = node
+              }}
               type="button"
               onClick={() => setSettingsTab(tab.id)}
               className={`remote-hit w-full px-5 text-left text-[14px] ${
@@ -260,37 +292,99 @@ export function SettingsScreen() {
 
         {settingsTab === 'epg' ? (
           <div>
-            <Row title="Источник XMLTV" hint=".xml или .xml.gz" />
+            <p className="mb-3 text-sm text-white/45">
+              Ссылок можно добавить сколько угодно. Одновременно грузятся максимум две (основная и дополнительная) — отметьте их галочкой.
+            </p>
+            {normalizeEpgSources(settings).map((source) => {
+              const enabledCount = normalizeEpgSources(settings).filter((item) => item.enabled).length
+              return (
+                <div key={source.id} className="mb-2 flex items-start gap-3 rounded-xl border border-white/8 bg-black/25 px-3 py-2">
+                  <input
+                    type="checkbox"
+                    className="mt-1 h-4 w-4 accent-accent"
+                    checked={source.enabled}
+                    onChange={() => {
+                      if (!source.enabled && enabledCount >= 2) {
+                        setError('Можно включить максимум два источника')
+                        return
+                      }
+                      const next = normalizeEpgSources(settings).map((item) =>
+                        item.id === source.id ? { ...item, enabled: !item.enabled } : item,
+                      )
+                      updateSettings({
+                        epgSources: next,
+                        epgUrl: enabledEpgUrls({ ...settings, epgSources: next })[0] || '',
+                      })
+                    }}
+                  />
+                  <div className="min-w-0 flex-1 break-all text-sm text-white/80">{source.url}</div>
+                  <button
+                    type="button"
+                    className="shrink-0 text-xs text-white/40"
+                    onClick={() => {
+                      const next = normalizeEpgSources(settings).filter((item) => item.id !== source.id)
+                      updateSettings({
+                        epgSources: next,
+                        epgUrl: enabledEpgUrls({ ...settings, epgSources: next })[0] || '',
+                      })
+                    }}
+                  >
+                    Удалить
+                  </button>
+                </div>
+              )
+            })}
             <input
               value={epgDraft}
               onChange={(event) => setEpgDraft(event.target.value)}
-              className="mb-3 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-sm outline-none focus:border-accent"
+              placeholder="https://example.com/guide.xml.gz"
+              className="mb-2 mt-3 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-sm outline-none focus:border-accent"
             />
-            <button
-              type="button"
-              disabled={busy === 'epg'}
-              onClick={async () => {
-                setBusy('epg')
-                try {
-                  await importEpg(epgDraft.trim())
-                  updateSettings({ epgUrl: epgDraft.trim() })
-                } catch (err) {
-                  setError(err.message)
-                } finally {
-                  setBusy('')
-                }
-              }}
-              className="mb-4 rounded-xl bg-accent px-4 py-2 text-sm"
-            >
-              {busy === 'epg' ? 'Загрузка EPG…' : 'Загрузить телепрограмму'}
-            </button>
+            <div className="mb-6 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="rounded-xl bg-white/10 px-4 py-2 text-sm"
+                onClick={() => {
+                  const url = epgDraft.trim()
+                  if (!url) return
+                  upsertEpgSource(url, normalizeEpgSources(settings).filter((item) => item.enabled).length < 2)
+                  setEpgDraft('')
+                }}
+              >
+                Добавить источник
+              </button>
+              <button
+                type="button"
+                disabled={busy === 'epg'}
+                onClick={async () => {
+                  setBusy('epg')
+                  setError('')
+                  try {
+                    const extra = epgDraft.trim()
+                    if (extra) upsertEpgSource(extra, true)
+                    const urls = enabledEpgUrls(
+                      extra ? { ...settings, epgSources: [...normalizeEpgSources(settings), { id: 'tmp', url: extra, enabled: true }] } : settings,
+                    )
+                    await importEpg(urls.length ? [...new Set(urls)] : extra)
+                    setEpgDraft('')
+                  } catch (err) {
+                    setError(err.message)
+                  } finally {
+                    setBusy('')
+                  }
+                }}
+                className="rounded-xl bg-accent px-4 py-2 text-sm disabled:opacity-40"
+              >
+                {busy === 'epg' ? 'Загрузка EPG…' : 'Загрузить телепрограмму'}
+              </button>
+            </div>
             <Row title="Сдвиг времени" hint="Если передачи идут раньше или позже">
               <button type="button" className="rounded-lg bg-white/10 px-3 py-1 text-sm" onClick={() => updateSettings({ epgOffsetHours: ((settings.epgOffsetHours + 1 + 12) % 25) - 12 })}>
                 {settings.epgOffsetHours > 0 ? `+${settings.epgOffsetHours} ч` : `${settings.epgOffsetHours} ч`}
               </button>
             </Row>
-            <Row title="Хранить программу" hint="Сколько дней держать в гиде">
-              <button type="button" className="rounded-lg bg-white/10 px-3 py-1 text-sm" onClick={() => cycle([1, 2, 3, 5, 7], settings.epgDays, 'epgDays')}>
+            <Row title="Хранить программу" hint="Сколько дней назад держать в гиде. Вперёд — всё, что есть в XMLTV">
+              <button type="button" className="rounded-lg bg-white/10 px-3 py-1 text-sm" onClick={() => cycle([1, 2, 3, 5, 7, 14], settings.epgDays, 'epgDays')}>
                 {settings.epgDays} дн.
               </button>
             </Row>
@@ -399,8 +493,8 @@ export function SettingsScreen() {
               </div>
             </Row>
             <p className="mt-4 text-sm text-white/40">
-              В меню «Архив» показываются каналы, у которых в плейлисте указан catch-up (`tvg-rec`). Глубина
-              ограничивает, сколько дней записи считать доступными.
+              Архив смотрится из телегида: выберите день слева от передач и нажмите OK на прошедшей программе.
+              Глубина ограничивает, сколько дней назад можно открыть запись.
             </p>
           </div>
         ) : null}
@@ -430,11 +524,6 @@ export function SettingsScreen() {
             <Row title="Размер логотипов">
               <button type="button" className="rounded-lg bg-white/10 px-3 py-1 text-sm" onClick={() => cycle(['sm', 'md', 'lg'], settings.logoSize, 'logoSize')}>
                 {settings.logoSize}
-              </button>
-            </Row>
-            <Row title="Часов в телепрограмме" hint="Ширина сетки EPG">
-              <button type="button" className="rounded-lg bg-white/10 px-3 py-1 text-sm" onClick={() => cycle([3, 4, 6, 12, 18], settings.guideHours, 'guideHours')}>
-                {settings.guideHours} ч
               </button>
             </Row>
             <Row title="Строк в гиде">

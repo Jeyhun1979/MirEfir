@@ -1,5 +1,6 @@
-const WINDOW_BACK_MS = 3 * 60 * 60 * 1000
-const WINDOW_AHEAD_MS = 30 * 60 * 60 * 1000
+const DAY_MS = 24 * 60 * 60 * 1000
+const DEFAULT_BACK_DAYS = 14
+const DEFAULT_AHEAD_DAYS = 16
 
 export function parseXmltvTime(value) {
   const text = String(value || '').trim()
@@ -88,9 +89,11 @@ function consumeChunk(xml, channels, programs, from, to) {
   return ''
 }
 
-export async function parseXmltvBuffer(buffer, now = Date.now()) {
-  const from = now - WINDOW_BACK_MS
-  const to = now + WINDOW_AHEAD_MS
+export async function parseXmltvBuffer(buffer, now = Date.now(), options = {}) {
+  const backDays = Math.max(1, Number(options.backDays) || DEFAULT_BACK_DAYS)
+  const aheadDays = Math.max(1, Number(options.aheadDays) || DEFAULT_AHEAD_DAYS)
+  const from = now - backDays * DAY_MS
+  const to = now + aheadDays * DAY_MS
   const channels = {}
   const programs = {}
 
@@ -216,7 +219,7 @@ async function fetchBinary(url) {
   throw new Error('Не удалось скачать EPG. Проверьте ссылку или откройте Electron.')
 }
 
-function parseInWorker(buffer) {
+function parseInWorker(buffer, options) {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('../workers/xmltvWorker.js', import.meta.url), { type: 'module' })
     const timer = window.setTimeout(() => {
@@ -235,15 +238,39 @@ function parseInWorker(buffer) {
       worker.terminate()
       reject(error)
     }
-    worker.postMessage({ buffer }, [buffer])
+    worker.postMessage({ buffer, options }, [buffer])
   })
 }
 
-export async function loadXmltv(url) {
+export function mergeXmltv(parts) {
+  const channels = {}
+  const programs = {}
+  for (const xmltv of parts || []) {
+    Object.assign(channels, xmltv?.channels || {})
+    for (const [id, list] of Object.entries(xmltv?.programs || {})) {
+      if (!programs[id]) programs[id] = []
+      programs[id].push(...list)
+    }
+  }
+  for (const [id, list] of Object.entries(programs)) {
+    const seen = new Set()
+    const next = []
+    for (const item of list.sort((a, b) => a.start - b.start)) {
+      const key = `${item.start}-${item.end}-${item.title}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      next.push(item)
+    }
+    programs[id] = next
+  }
+  return { channels, programs }
+}
+
+export async function loadXmltv(url, options = {}) {
   const buffer = await fetchBinary(url)
   try {
-    return await parseInWorker(buffer.slice(0))
+    return await parseInWorker(buffer.slice(0), options)
   } catch {
-    return parseXmltvBuffer(buffer)
+    return parseXmltvBuffer(buffer, Date.now(), options)
   }
 }

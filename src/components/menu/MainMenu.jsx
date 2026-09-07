@@ -5,17 +5,13 @@ import { usePlayer } from '../../store/PlayerContext.jsx'
 
 const ITEMS = [
   { id: 'live', title: 'Телевидение', hint: 'Эфир и категории' },
-  { id: 'movies', title: 'Фильмы', hint: 'Кино из плейлиста' },
-  { id: 'series', title: 'Сериалы', hint: 'Сериальные группы' },
-  { id: 'guide', title: 'Телепрограмма', hint: 'Сетка EPG' },
+  { id: 'guide', title: 'Телепрограмма', hint: 'Источники и сдвиг EPG' },
   { id: 'recordings', title: 'Записи', hint: 'DVR и расписание' },
   { id: 'multiview', title: 'Мультиэкран', hint: 'Несколько каналов сразу' },
   { id: 'search', title: 'Поиск', hint: 'Найти канал или голос' },
   { id: 'playlists', title: 'Плейлисты', hint: 'M3U и Xtream' },
-  { id: 'favorites', title: 'Избранное', hint: 'Каналы со звездой' },
-  { id: 'history', title: 'История', hint: 'Недавно смотрели' },
-  { id: 'archive', title: 'Архив', hint: 'Catch-up' },
-  { id: 'settings', title: 'Настройки', hint: 'Все параметры плеера' },
+  { id: 'history', title: 'История', hint: 'Последние каналы' },
+  { id: 'settings', title: 'Настройки', hint: 'Внешний вид, плеер, пульт' },
   { id: 'exit', title: 'Выход', hint: 'Закрыть приложение' },
 ]
 
@@ -27,7 +23,6 @@ export function MainMenu() {
     setListMode,
     setUiScreen,
     setSelectedGroupId,
-    setFocusZone,
     goBack,
     exitPrompt,
     setExitPrompt,
@@ -84,20 +79,8 @@ export function MainMenu() {
       closeOverlays()
       return
     }
-    if (id === 'movies') {
-      setListMode('movies')
-      closeOverlays()
-      return
-    }
-    if (id === 'series') {
-      setListMode('series')
-      closeOverlays()
-      return
-    }
     if (id === 'guide') {
-      setListMode('live')
-      closeOverlays()
-      setFocusZone('channels')
+      openSettings('epg')
       return
     }
     if (id === 'recordings') {
@@ -112,21 +95,8 @@ export function MainMenu() {
       openSettings('playlists')
       return
     }
-    if (id === 'favorites') {
-      setListMode('live')
-      setSelectedGroupId('favorites')
-      closeOverlays()
-      return
-    }
     if (id === 'history') {
-      setListMode('live')
-      setSelectedGroupId('recent')
-      closeOverlays()
-      return
-    }
-    if (id === 'archive') {
-      setListMode('archive')
-      closeOverlays()
+      setUiScreen('history')
       return
     }
     if (id === 'search') {
@@ -134,7 +104,7 @@ export function MainMenu() {
       return
     }
     if (id === 'settings') {
-      openSettings('playlists')
+      openSettings('appearance')
       return
     }
     if (id === 'exit') {

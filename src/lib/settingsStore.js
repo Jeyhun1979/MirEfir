@@ -7,8 +7,9 @@ export const DEFAULT_SETTINGS = {
   playlists: [],
   activePlaylistId: '',
   epgUrl: '',
+  epgSources: [],
   epgOffsetHours: 0,
-  epgDays: 2,
+  epgDays: 7,
   epgAutoUpdate: true,
   archiveEnabled: true,
   archiveDays: 7,
@@ -71,12 +72,40 @@ function migrateLegacyStorage() {
   localStorage.setItem('mirefir.migrated', '1')
 }
 
+export function normalizeEpgSources(settings) {
+  const list = Array.isArray(settings?.epgSources) ? settings.epgSources : []
+  const cleaned = list
+    .map((item, index) => ({
+      id: String(item?.id || `epg-${index + 1}`),
+      url: String(item?.url || '').trim(),
+      enabled: Boolean(item?.enabled),
+    }))
+    .filter((item) => item.url)
+  if (cleaned.length) return cleaned
+  const fallback = String(settings?.epgUrl || '').trim()
+  return fallback ? [{ id: 'primary', url: fallback, enabled: true }] : []
+}
+
+export function enabledEpgUrls(settings) {
+  return normalizeEpgSources(settings)
+    .filter((item) => item.enabled)
+    .slice(0, 2)
+    .map((item) => item.url)
+}
+
+export function xmltvWindow(settings) {
+  return {
+    backDays: Math.max(Number(settings?.epgDays) || 7, Number(settings?.archiveDays) || 7, 7),
+    aheadDays: 16,
+  }
+}
+
 export function loadSettings() {
   try {
     migrateLegacyStorage()
     const raw = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null')
     if (!raw || typeof raw !== 'object') return { ...DEFAULT_SETTINGS }
-    return {
+    const merged = {
       ...DEFAULT_SETTINGS,
       ...raw,
       keys: { ...DEFAULT_SETTINGS.keys, ...(raw.keys || {}) },
@@ -86,6 +115,9 @@ export function loadSettings() {
       recordingPath: !raw.recordingPath || raw.recordingPath === 'Recordings' ? '' : raw.recordingPath,
       epgUrl: raw.epgUrl || '',
     }
+    merged.epgSources = normalizeEpgSources(merged)
+    if (!merged.epgUrl) merged.epgUrl = enabledEpgUrls(merged)[0] || ''
+    return merged
   } catch {
     return { ...DEFAULT_SETTINGS }
   }
@@ -136,6 +168,13 @@ export function buildBackup(extra = {}) {
     playlistUrl: localStorage.getItem('mirefir.playlistUrl'),
     playlistText: localStorage.getItem('mirefir.playlistText'),
     epgUrl: localStorage.getItem('mirefir.epgUrl'),
+    history: (() => {
+      try {
+        return JSON.parse(localStorage.getItem('mirefir.history') || '[]')
+      } catch {
+        return []
+      }
+    })(),
     session: (() => {
       try {
         return JSON.parse(localStorage.getItem('mirefir.session') || 'null')
@@ -165,6 +204,7 @@ export function applyBackup(data) {
   if (data.playlistUrl) localStorage.setItem('mirefir.playlistUrl', data.playlistUrl)
   if (data.playlistText) localStorage.setItem('mirefir.playlistText', data.playlistText)
   if (data.epgUrl) localStorage.setItem('mirefir.epgUrl', data.epgUrl)
+  if (data.history) localStorage.setItem('mirefir.history', JSON.stringify(data.history))
   if (data.session) localStorage.setItem('mirefir.session', JSON.stringify(data.session))
   queuePersistFile()
 }

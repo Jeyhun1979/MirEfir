@@ -1,11 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
-import { formatRange, getProgramProgress } from '../lib/epg.js'
+import { formatRange } from '../lib/epg.js'
 import { useClock } from '../hooks/useClock.js'
 import { useHls } from '../hooks/useHls.js'
 import { useRecorder } from '../hooks/useRecorder.js'
 import { usePlayer } from '../store/PlayerContext.jsx'
 import { ClockOverlay } from './ClockOverlay.jsx'
 import { LogoMark } from './LogoMark.jsx'
+import { arrowDir, isBackKey, isOkKey } from '../lib/remoteKeys.js'
+
+const PAD_MS = 6500
+const NUDGE_MS = 15000
+
+function formatHms(ms) {
+  const sec = Math.max(0, Math.floor(Number(ms) / 1000) || 0)
+  const hours = Math.floor(sec / 3600)
+  const minutes = Math.floor((sec % 3600) / 60)
+  const seconds = sec % 60
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+}
 
 export function VideoPlayer({ fullscreen = false }) {
   const videoRef = useRef(null)
@@ -16,6 +28,7 @@ export function VideoPlayer({ fullscreen = false }) {
     playback,
     playProgram,
     seekArchive,
+    seekToMs,
     focusZone,
     setFocusZone,
     setIsFullscreen,
@@ -38,7 +51,6 @@ export function VideoPlayer({ fullscreen = false }) {
   } = usePlayer()
   const program = getCurrentProgram(selectedChannel)
   const nextProgram = getNextProgram(selectedChannel)
-  const progress = getProgramProgress(program, now.getTime())
   const pauseForMulti = uiScreen === 'multiview' && !recordingActive
   const { error, loading } = useHls(videoRef, pauseForMulti ? '' : streamUrl)
   const recorder = useRecorder(videoRef, selectedChannel, settings, updateSettings)
@@ -46,15 +58,114 @@ export function VideoPlayer({ fullscreen = false }) {
   const [recHint, setRecHint] = useState('')
   const [pipOn, setPipOn] = useState(false)
   const [padOn, setPadOn] = useState(false)
+  const [padFocus, setPadFocus] = useState('buttons')
+  const [buttonCursor, setButtonCursor] = useState(0)
+  const [previewMs, setPreviewMs] = useState(null)
   const [seekHud, setSeekHud] = useState(null)
   const lastPulse = useRef(0)
   const lastPip = useRef(0)
   const padTimer = useRef(0)
+  const draggingRef = useRef(false)
+  const barRef = useRef(null)
+  const lastDragSeek = useRef(0)
+  const padActionsRef = useRef([])
+
+  const archive = playback?.mode === 'archive'
+  const boundsStart = archive ? playback.originStart || playback.start : program?.start
+  const boundsEnd = archive ? playback.originEnd || playback.end : program?.end
+  const hasBounds = Boolean(boundsStart && boundsEnd && boundsEnd > boundsStart)
+  const durationMs = hasBounds ? boundsEnd - boundsStart : 0
+  const liveMs = now.getTime()
+  const videoTimeMs =
+    archive && videoRef.current && Number.isFinite(videoRef.current.currentTime)
+      ? (playback.start || boundsStart) + videoRef.current.currentTime * 1000
+      : archive
+        ? playback.start
+        : liveMs
+  const actualMs = hasBounds ? Math.min(boundsEnd, Math.max(boundsStart, videoTimeMs)) : liveMs
+  const maxMs = archive ? boundsEnd : Math.min(boundsEnd || liveMs, liveMs)
+  const displayMs = previewMs == null ? actualMs : previewMs
+  const progress = hasBounds ? Math.min(1, Math.max(0, (actualMs - boundsStart) / durationMs)) : 0
+  const displayProgress = hasBounds ? Math.min(1, Math.max(0, (displayMs - boundsStart) / durationMs)) : 0
 
   const showPad = () => {
     setPadOn(true)
+    if (draggingRef.current) return
     window.clearTimeout(padTimer.current)
-    padTimer.current = window.setTimeout(() => setPadOn(false), 4500)
+    padTimer.current = window.setTimeout(() => {
+      setPadOn(false)
+      setPadFocus('buttons')
+      setButtonCursor(0)
+      setPreviewMs(null)
+    }, PAD_MS)
+  }
+
+  const clampMs = (value) => {
+    if (!hasBounds) return value
+    return Math.min(maxMs, Math.max(boundsStart, value))
+  }
+
+  const commitSeek = (targetMs) => {
+    if (!hasBounds) return
+    const next = clampMs(targetMs)
+    const video = videoRef.current
+    const deltaSec = (next - actualMs) / 1000
+    if (video && Math.abs(deltaSec) >= 0.2) {
+      const ranges = video.seekable
+      if (ranges.length) {
+        const start = ranges.start(0)
+        const end = ranges.end(ranges.length - 1)
+        const time = video.currentTime + deltaSec
+        if (time >= start - 0.05 && time <= end + 0.05) {
+          video.currentTime = Math.min(end, Math.max(start, time))
+          return
+        }
+      }
+    }
+    seekToMs(next, {
+      originStart: boundsStart,
+      originEnd: boundsEnd,
+      start: boundsStart,
+      end: boundsEnd,
+      title: program?.title || playback?.title,
+    })
+  }
+
+  const msFromClientX = (clientX) => {
+    const node = barRef.current
+    if (!node || !hasBounds) return actualMs
+    const rect = node.getBoundingClientRect()
+    const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width))
+    return clampMs(boundsStart + ratio * durationMs)
+  }
+
+  const startBarDrag = (clientX) => {
+    if (!hasBounds) return
+    draggingRef.current = true
+    window.clearTimeout(padTimer.current)
+    setPadFocus('bar')
+    showPad()
+    const next = msFromClientX(clientX)
+    setPreviewMs(next)
+  }
+
+  const moveBarDrag = (clientX) => {
+    if (!draggingRef.current || !hasBounds) return
+    const next = msFromClientX(clientX)
+    setPreviewMs(next)
+    const nowTs = Date.now()
+    if (nowTs - lastDragSeek.current > 220) {
+      lastDragSeek.current = nowTs
+      commitSeek(next)
+    }
+  }
+
+  const endBarDrag = () => {
+    if (!draggingRef.current) return
+    draggingRef.current = false
+    if (previewMs != null) commitSeek(previewMs)
+    setPreviewMs(null)
+    showPad()
   }
 
   useEffect(() => {
@@ -65,40 +176,107 @@ export function VideoPlayer({ fullscreen = false }) {
   }, [volume, muted])
 
   useEffect(() => {
-    const onPad = () => showPad()
+    const onPad = () => {
+      setPadFocus('buttons')
+      showPad()
+    }
     window.addEventListener('mirefir:pad', onPad)
     return () => window.removeEventListener('mirefir:pad', onPad)
   }, [])
 
   useEffect(() => {
+    if (!padOn || liveGuideOpen || uiScreen) return undefined
+    const onKey = (event) => {
+      const dir = arrowDir(event)
+      if (isBackKey(event)) {
+        event.preventDefault()
+        event.stopPropagation()
+        setPadOn(false)
+        setPadFocus('buttons')
+        setPreviewMs(null)
+        return
+      }
+      if (dir === 'up' || dir === 'down') {
+        event.preventDefault()
+        event.stopPropagation()
+        setPadFocus(dir === 'down' ? 'bar' : 'buttons')
+        showPad()
+        return
+      }
+      if (dir === 'left' || dir === 'right') {
+        event.preventDefault()
+        event.stopPropagation()
+        showPad()
+        if (padFocus === 'bar' && hasBounds) {
+          const next = clampMs(displayMs + (dir === 'right' ? NUDGE_MS : -NUDGE_MS))
+          setPreviewMs(next)
+          commitSeek(next)
+          window.setTimeout(() => setPreviewMs(null), 400)
+          return
+        }
+        setButtonCursor((current) => {
+          const count = 7
+          return (current + (dir === 'right' ? 1 : -1) + count) % count
+        })
+        return
+      }
+      if (isOkKey(event)) {
+        event.preventDefault()
+        event.stopPropagation()
+        showPad()
+        if (padFocus === 'buttons') padActionsRef.current[buttonCursor]?.run()
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [buttonCursor, displayMs, hasBounds, liveGuideOpen, padFocus, padOn, uiScreen])
+
+  useEffect(() => {
+    const seekInBuffer = (video, seconds) => {
+      const ranges = video.seekable
+      if (ranges.length) {
+        const start = ranges.start(0)
+        const end = ranges.end(ranges.length - 1)
+        const next = Math.min(end, Math.max(start, video.currentTime + seconds))
+        if (Math.abs(next - video.currentTime) < 0.2) return seconds > 0 ? 'live-edge' : 'start'
+        video.currentTime = next
+        return 'ok'
+      }
+      const duration = video.duration
+      if (Number.isFinite(duration) && duration > 0) {
+        video.currentTime = Math.min(duration, Math.max(0, video.currentTime + seconds))
+        return 'ok'
+      }
+      const guess = video.currentTime + seconds
+      if (guess >= 0) {
+        video.currentTime = guess
+        return 'ok'
+      }
+      return 'fail'
+    }
+
     const applySeek = (seconds) => {
       const video = videoRef.current
+      if (!video || !seconds) return
       const archive = playback?.mode === 'archive'
+      const result = seekInBuffer(video, seconds)
+      if (result === 'ok') {
+        setSeekHud({ label: `${seconds > 0 ? '+' : '−'}${Math.abs(seconds)} сек`, at: Date.now() })
+        return
+      }
       if (archive) {
-        if (seconds > 0 && playback.end && Date.now() < playback.end && video) {
-          const end = video.seekable.length ? video.seekable.end(video.seekable.length - 1) : video.duration
-          if (Number.isFinite(end) && video.currentTime + seconds <= end) {
-            video.currentTime = Math.min(end, Math.max(0, video.currentTime + seconds))
-          } else seekArchive(seconds)
-        } else if (seconds < 0 && video) {
-          const start = video.seekable.length ? video.seekable.start(0) : 0
-          if (video.currentTime + seconds >= start) video.currentTime = Math.max(start, video.currentTime + seconds)
-          else seekArchive(seconds)
-        } else seekArchive(seconds)
+        seekArchive(seconds)
         setSeekHud({ label: playback.title || 'Архив', at: Date.now() })
         return
       }
-      if (!video) return
-      if (seconds > 0) return
-      const start = video.seekable.length ? video.seekable.start(0) : Math.max(0, video.currentTime - 120)
-      const next = Math.max(start, video.currentTime + seconds)
-      if (next < video.currentTime - 0.2) {
-        video.currentTime = next
-        setSeekHud({ label: 'Эфир −30 сек', at: Date.now() })
-      } else if (selectedChannel) {
+      if (result === 'live-edge') {
+        setSeekHud({ label: 'Прямой эфир', at: Date.now() })
+        return
+      }
+      if (seconds < 0 && selectedChannel) {
         const from = Date.now() + seconds * 1000
-        playProgram(selectedChannel, { start: from, end: from + 60 * 60 * 1000, title: 'Эфир со сдвигом' })
-        setSeekHud({ label: 'Архив эфира', at: Date.now() })
+        const ok = playProgram(selectedChannel, { start: from, end: from + 60 * 60 * 1000, title: 'Эфир со сдвигом' })
+        setSeekHud({ label: ok ? 'Архив эфира' : 'Перемотка недоступна', at: Date.now() })
       }
     }
 
@@ -179,6 +357,18 @@ export function VideoPlayer({ fullscreen = false }) {
 
   const level = muted ? 0 : volume
   const showSpinner = Boolean(selectedChannel) && loading && !error
+  const padItems = [
+    { id: 'back', label: '−30с', run: () => window.dispatchEvent(new CustomEvent('mirefir:seek', { detail: { seconds: -30 } })) },
+    { id: 'fwd', label: '+30с', run: () => window.dispatchEvent(new CustomEvent('mirefir:seek', { detail: { seconds: 30 } })) },
+    { id: 'guide', label: 'Гид', run: toggleLiveGuide },
+    { id: 'rec', label: recorder.active ? 'Стоп' : 'REC', run: toggleRecord },
+    { id: 'pip', label: 'PiP', run: togglePip },
+    { id: 'voice', label: 'Голос', run: requestVoiceSearch },
+    { id: 'menu', label: 'Меню', run: openMenu },
+  ]
+  padActionsRef.current = padItems
+  const elapsedLabel = hasBounds ? formatHms(displayMs - boundsStart) : '00:00:00'
+  const totalLabel = hasBounds ? formatHms(durationMs) : '00:00:00'
 
   return (
     <section
@@ -299,20 +489,23 @@ export function VideoPlayer({ fullscreen = false }) {
       ) : null}
 
       {liveGuideOpen || !padOn ? null : (
-        <div className="absolute bottom-24 left-1/2 z-20 flex -translate-x-1/2 gap-2 rounded-2xl bg-black/55 p-2">
-          {[
-            { id: 'back', label: '−30с', run: () => window.dispatchEvent(new CustomEvent('mirefir:seek', { detail: { seconds: -30 } })) },
-            { id: 'fwd', label: '+30с', run: () => window.dispatchEvent(new CustomEvent('mirefir:seek', { detail: { seconds: 30 } })) },
-            { id: 'guide', label: 'Гид', run: toggleLiveGuide },
-            { id: 'rec', label: recorder.active ? 'Стоп' : 'REC', run: toggleRecord },
-            { id: 'pip', label: 'PiP', run: togglePip },
-            { id: 'voice', label: 'Голос', run: requestVoiceSearch },
-            { id: 'menu', label: 'Меню', run: openMenu },
-          ].map((item) => (
+        <div
+          className={`absolute bottom-28 left-1/2 z-20 flex -translate-x-1/2 gap-2 rounded-2xl p-2 ${
+            padFocus === 'buttons' ? 'bg-black/70 ring-1 ring-accent/80' : 'bg-black/55'
+          }`}
+        >
+          {padItems.map((item, index) => (
             <button
               key={item.id}
               type="button"
-              className="remote-hit min-w-[76px] rounded-xl bg-white/12 px-3 text-sm font-medium hover:bg-accent"
+              className={`remote-hit min-w-[76px] rounded-xl px-3 text-sm font-medium ${
+                padFocus === 'buttons' && index === buttonCursor ? 'bg-accent' : 'bg-white/12 hover:bg-accent'
+              }`}
+              onMouseEnter={() => {
+                setPadFocus('buttons')
+                setButtonCursor(index)
+                showPad()
+              }}
               onClick={(event) => {
                 event.stopPropagation()
                 if (item.id === 'back' || item.id === 'fwd') return
@@ -341,20 +534,58 @@ export function VideoPlayer({ fullscreen = false }) {
 
       {liveGuideOpen ? null : (
       <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-4">
-        <div className="text-sm text-white/90">{program?.title || 'Прямой эфир'}</div>
+        <div className="text-sm text-white/90">{program?.title || playback?.title || 'Прямой эфир'}</div>
         <div className="text-xs text-white/50">
-          {program ? formatRange(program.start, program.end) : selectedChannel?.group}
-          {nextProgram ? `  ·  далее ${nextProgram.title}` : ''}
+          {hasBounds ? formatRange(boundsStart, boundsEnd) : selectedChannel?.group}
+          {nextProgram && !archive ? `  ·  далее ${nextProgram.title}` : ''}
         </div>
-        <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/15">
-          <div className="h-full rounded-full bg-accent" style={{ width: `${progress * 100}%` }} />
-        </div>
+        {padOn && hasBounds ? (
+          <div className="pointer-events-auto mt-2">
+            <div className="mb-1 flex justify-end">
+              <span className="text-[13px] font-medium tabular-nums text-white/90">
+                {elapsedLabel}/{totalLabel}
+              </span>
+            </div>
+            <div
+              ref={barRef}
+              className={`relative h-2.5 cursor-pointer rounded-full bg-white/15 ${
+                padFocus === 'bar' ? 'ring-2 ring-white/80' : ''
+              }`}
+              onPointerDown={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                event.currentTarget.setPointerCapture(event.pointerId)
+                startBarDrag(event.clientX)
+              }}
+              onPointerMove={(event) => moveBarDrag(event.clientX)}
+              onPointerUp={endBarDrag}
+              onPointerCancel={endBarDrag}
+              onMouseEnter={() => {
+                setPadFocus('bar')
+                showPad()
+              }}
+            >
+              <div
+                className="absolute inset-y-0 left-0 rounded-full bg-accent"
+                style={{ width: `${displayProgress * 100}%` }}
+              />
+              <div
+                className="absolute top-1/2 z-10 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-accent shadow-md"
+                style={{ left: `${displayProgress * 100}%` }}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/15">
+            <div className="h-full rounded-full bg-accent" style={{ width: `${progress * 100}%` }} />
+          </div>
+        )}
         {recHint || recorder.error ? (
           <div className="mt-2 text-[11px] text-red-300">{recHint || recorder.error}</div>
         ) : null}
         <div className="mt-2 text-[11px] text-white/35">
           {fullscreen || focusZone === 'player'
-            ? '← телепрограмма · −30с/+30с · , и . — перемотка · P — окошко · R — запись'
+            ? 'OK — меню · ↑↓ кнопки/линия · ←→ перемотка · Назад — закрыть'
             : 'Enter — на весь экран · ← гид · P — PiP · V — голос'}
         </div>
       </div>

@@ -1,6 +1,10 @@
 export function getCurrentProgram(programs, now = Date.now()) {
   if (!programs?.length) return null
-  return programs.find((item) => item.start <= now && now < item.end) || null
+  let best = null
+  for (const item of programs) {
+    if (item.start <= now && now < item.end && (!best || item.start > best.start)) best = item
+  }
+  return best
 }
 
 export function getNextProgram(programs, now = Date.now()) {
@@ -41,11 +45,17 @@ export function startOfDay(ts = Date.now()) {
   return date.getTime()
 }
 
-export function formatDayShort(ts) {
+export function formatDayParts(ts) {
   const date = new Date(ts)
-  const day = date.getDate()
-  const month = date.toLocaleDateString('ru-RU', { month: 'short' }).replace('.', '').replace(' ', '')
-  const week = date.toLocaleDateString('ru-RU', { weekday: 'short' }).replace('.', '').toUpperCase()
+  return {
+    day: String(date.getDate()),
+    month: date.toLocaleDateString('ru-RU', { month: 'short' }).replace('.', '').replace(' ', ''),
+    week: date.toLocaleDateString('ru-RU', { weekday: 'short' }).replace('.', '').toUpperCase(),
+  }
+}
+
+export function formatDayShort(ts) {
+  const { day, month, week } = formatDayParts(ts)
   return `${day}${month} ${week}`
 }
 
@@ -56,23 +66,15 @@ export function collectProgramDays(programs, now = Date.now()) {
   return [...days].sort((a, b) => a - b)
 }
 
-export function collectGuideDays({ programs, now = Date.now(), archiveDays = 0, archiveEnabled = false, catchupDays = 0, epgDays = 2 }) {
+export function collectGuideDays({ programs, now = Date.now(), archiveDays = 0, archiveEnabled = false, catchupDays = 0, epgDays = 7 }) {
   const today = startOfDay(now)
   const dayMs = 24 * 60 * 60 * 1000
-  const past = archiveEnabled ? Math.max(Number(archiveDays) || 0, Number(catchupDays) || 0) : 0
-  const days = new Set()
-  for (let i = -past; i <= 0; i += 1) days.add(today + i * dayMs)
+  const keep = Math.max(Number(epgDays) || 0, archiveEnabled ? Number(archiveDays) || 0 : 0, Number(catchupDays) || 0)
+  const days = new Set([today])
+  for (let i = 1; i <= keep; i += 1) days.add(today - i * dayMs)
   for (const item of programs || []) {
     const day = startOfDay(item.start)
-    if (day >= today - past * dayMs) days.add(day)
-  }
-  const futureLimit = today + Math.max(1, Number(epgDays) || 2) * dayMs
-  for (const item of programs || []) {
-    const day = startOfDay(item.start)
-    if (day > today && day <= futureLimit) days.add(day)
-  }
-  if (![...days].some((day) => day > today)) {
-    for (let i = 1; i <= Math.max(1, Number(epgDays) || 2); i += 1) days.add(today + i * dayMs)
+    if (day >= today - keep * dayMs) days.add(day)
   }
   return [...days].sort((a, b) => a - b)
 }

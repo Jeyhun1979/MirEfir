@@ -8,7 +8,7 @@ import { PlaylistModal } from './components/PlaylistModal.jsx'
 import { UpdateDialog } from './components/UpdateDialog.jsx'
 import { MainMenu } from './components/menu/MainMenu.jsx'
 import { SearchOverlay } from './components/menu/SearchOverlay.jsx'
-import { MultiViewScreen, RecordingsScreen } from './components/menu/ExtraScreens.jsx'
+import { MultiViewScreen, RecordingsScreen, HistoryScreen } from './components/menu/ExtraScreens.jsx'
 import { SettingsScreen } from './components/menu/SettingsScreen.jsx'
 import { Sidebar } from './components/Sidebar.jsx'
 import { TopBar } from './components/TopBar.jsx'
@@ -61,6 +61,7 @@ export default function App() {
       <ChannelActionMenu />
       <ExitPrompt />
       <RecordingsScreen />
+      <HistoryScreen />
       <MultiViewScreen />
     </div>
   )

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   collectGuideDays,
-  formatDayShort,
+  formatDayParts,
   formatRange,
   formatRemaining,
   getProgramProgress,
@@ -20,6 +20,48 @@ const OVERSCAN = 6
 function wrapIndex(index, length) {
   if (!length) return 0
   return (index + length) % length
+}
+
+function MarqueeText({ text, active }) {
+  const wrapRef = useRef(null)
+  const textRef = useRef(null)
+  const [overflow, setOverflow] = useState(false)
+
+  useEffect(() => {
+    const wrap = wrapRef.current
+    const node = textRef.current
+    if (!wrap || !node) return
+    setOverflow(node.scrollWidth > wrap.clientWidth + 2)
+  }, [text, active])
+
+  return (
+    <div ref={wrapRef} className="min-w-0 flex-1 overflow-hidden">
+      <span
+        ref={textRef}
+        className={active && overflow ? 'epg-marquee inline-block whitespace-nowrap' : 'block truncate'}
+      >
+        {text}
+      </span>
+    </div>
+  )
+}
+
+function DayButton({ day, hovered, selected, onClick, onEnter }) {
+  const parts = formatDayParts(day)
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseEnter={onEnter}
+      className={`remote-hit mb-1 flex w-full flex-col items-center rounded-md px-1 py-1.5 ${
+        hovered ? 'bg-accent/75' : selected ? 'text-sky-300' : 'text-white/70 hover:bg-white/8'
+      }`}
+    >
+      <span className="text-[18px] leading-5 font-semibold">{parts.day}</span>
+      <span className="text-[11px] leading-4 text-white/50">{parts.month}</span>
+      <span className="text-[16px] leading-5 font-medium">{parts.week}</span>
+    </button>
+  )
 }
 
 function ArchiveMark({ visible }) {
@@ -117,17 +159,18 @@ export function LiveGuideOverlay() {
   const activeGroup = groups.find((group) => group.id === groupId) || groups[0]
   const focusedChannel = list[channelCursor] || selectedChannel
   const allPrograms = useMemo(() => getPrograms(focusedChannel), [focusedChannel, getPrograms])
+  const todayStamp = startOfDay(now.getTime())
   const days = useMemo(
     () =>
       collectGuideDays({
         programs: allPrograms,
-        now: now.getTime(),
+        now: todayStamp,
         archiveDays: settings.archiveDays,
         archiveEnabled: settings.archiveEnabled,
         catchupDays: focusedChannel?.catchupDays,
         epgDays: settings.epgDays,
       }),
-    [allPrograms, focusedChannel?.catchupDays, now, settings.archiveDays, settings.archiveEnabled, settings.epgDays],
+    [allPrograms, focusedChannel?.catchupDays, settings.archiveDays, settings.archiveEnabled, settings.epgDays, todayStamp],
   )
   const selectedDay = days[dayCursor] || startOfDay(now.getTime())
   const dayPrograms = useMemo(() => programsOnDay(allPrograms, selectedDay), [allPrograms, selectedDay])
@@ -190,11 +233,11 @@ export function LiveGuideOverlay() {
   }, [focusedChannel?.id, selectedDay, liveGuideView])
 
   useEffect(() => {
-    if (!liveGuideView) return
+    if (!liveGuideView || !days.length) return
     const today = startOfDay(Date.now())
     const index = days.findIndex((day) => day === today)
     if (index >= 0) setDayCursor(index)
-  }, [liveGuideView])
+  }, [days.length, liveGuideView])
 
   useEffect(() => {
     const el = channelRef.current
@@ -208,7 +251,7 @@ export function LiveGuideOverlay() {
 
   useEffect(() => {
     const el = programRef.current
-    if (!el || liveGuideView !== 'schedule') return
+    if (!el || (focusCol !== 'programs' && liveGuideView !== 'schedule')) return
     const top = programCursor * PROGRAM_ROW
     if (top < el.scrollTop) el.scrollTop = top
     else if (top + PROGRAM_ROW > el.scrollTop + el.clientHeight) el.scrollTop = top + PROGRAM_ROW - el.clientHeight
@@ -274,6 +317,10 @@ export function LiveGuideOverlay() {
         playProgram(focusedChannel, focusedProgram)
         return
       }
+      if (focusCol === 'programs') {
+        playProgram(focusedChannel, focusedProgram)
+        return
+      }
       if (liveGuideView === 'categories' || liveGuideView === 'groups') {
         const inGroups = liveGuideView === 'groups' || focusCol === 'groups'
         if (inGroups) {
@@ -335,6 +382,7 @@ export function LiveGuideOverlay() {
       }
 
       if (isConfirmKey(event)) {
+        if (focusCol === 'programs' || focusCol === 'days') return
         if (!event.repeat) startOkHold(focusedChannel)
         return
       }
@@ -351,18 +399,35 @@ export function LiveGuideOverlay() {
         return
       }
 
-      if (liveGuideView === 'channels') {
+      if (liveGuideView === 'channels' || liveGuideView === 'schedule') {
         if (dir === 'left' || event.key === settings.keys?.liveGuide) {
+          if (focusCol === 'days') {
+            setFocusCol('programs')
+            return
+          }
+          if (focusCol === 'programs') {
+            setFocusCol('channels')
+            setLiveGuideView('channels')
+            return
+          }
           setLiveGuideView('categories')
           setFocusCol('channels')
           return
         }
         if (dir === 'right') {
-          setLiveGuideView('schedule')
-          setFocusCol('programs')
+          if (focusCol === 'channels') {
+            setFocusCol('programs')
+            return
+          }
+          if (focusCol === 'programs' && days.length) setFocusCol('days')
           return
         }
-        if (dir === 'up' || dir === 'down') moveChannel(dir === 'down' ? 1 : -1)
+        if (dir === 'up' || dir === 'down') {
+          const step = dir === 'down' ? 1 : -1
+          if (focusCol === 'days') setDayCursor((current) => wrapIndex(current + step, days.length))
+          else if (focusCol === 'programs') setProgramCursor((current) => wrapIndex(current + step, dayPrograms.length))
+          else moveChannel(step)
+        }
         return
       }
 
@@ -401,23 +466,6 @@ export function LiveGuideOverlay() {
           } else moveChannel(step)
         }
         return
-      }
-
-      if (liveGuideView === 'schedule') {
-        if (dir === 'left') {
-          if (focusCol === 'days') setFocusCol('programs')
-          else setLiveGuideView('channels')
-          return
-        }
-        if (dir === 'right') {
-          if (focusCol === 'programs' && days.length) setFocusCol('days')
-          return
-        }
-        if (dir === 'up' || dir === 'down') {
-          const step = dir === 'down' ? 1 : -1
-          if (focusCol === 'days') setDayCursor((current) => wrapIndex(current + step, days.length))
-          else setProgramCursor((current) => wrapIndex(current + step, dayPrograms.length))
-        }
       }
     }
 
@@ -503,12 +551,12 @@ export function LiveGuideOverlay() {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   {watching ? <span className="text-[11px] text-sky-300">▶</span> : null}
-                  <div className="truncate text-[14px] font-medium">
-                    {channel.number} {channel.displayName}
-                  </div>
-                  {fav ? <span className="text-[11px] text-amber-300">★</span> : null}
+                <div className="truncate text-[14px] font-medium">
+                  {channel.number} {channel.displayName}
                 </div>
-                <div className="truncate text-[12px] text-white/70">{program?.title || 'Прямой эфир'}</div>
+                {fav ? <span className="text-[11px] text-amber-300">★</span> : null}
+              </div>
+              <MarqueeText text={program?.title || 'Прямой эфир'} active={watching || hovered} />
                 {watching || hovered ? (
                   <div className="mt-1 h-1 overflow-hidden rounded-full bg-white/15">
                     <div className="h-full rounded-full bg-white/80" style={{ width: `${progress * 100}%` }} />
@@ -559,47 +607,19 @@ export function LiveGuideOverlay() {
           </aside>
         ) : null}
 
-        {liveGuideView === 'categories' || liveGuideView === 'groups' || liveGuideView === 'channels' ? (
-          <aside className="flex w-[min(400px,36vw)] flex-col bg-black/40 backdrop-blur-[2px]">
+        {liveGuideView === 'categories' || liveGuideView === 'groups' || liveGuideView === 'channels' || liveGuideView === 'schedule' ? (
+          <aside className="flex w-[min(280px,26vw)] flex-col bg-black/40 backdrop-blur-[2px]">
             <div className="px-4 py-3 text-[16px] font-medium">{activeGroup?.name || 'Каналы'}</div>
             {renderChannels()}
           </aside>
         ) : null}
 
-        {liveGuideView === 'channels' ? (
-          <aside className="flex w-[min(340px,28vw)] flex-col bg-black/35 backdrop-blur-[2px]">
-            <div className="flex items-center gap-3 px-4 py-3">
-              <LogoMark name={focusedChannel?.name} logo={focusedChannel?.logo} size={36} />
-              <div className="min-w-0">
-                <div className="truncate text-[15px] font-medium">
-                  {focusedChannel?.number} {focusedChannel?.displayName}
-                </div>
-              </div>
-            </div>
-            <div className="scroll-thin flex-1 overflow-y-auto px-3 pb-4">
-              {dayPrograms.map((program) => {
-                const current = program.start <= now.getTime() && now.getTime() < program.end
-                return (
-                  <div key={program.id || program.start} className={`flex gap-3 rounded-md px-2 py-1.5 text-[13px] ${current ? 'bg-white/12 text-white' : 'text-white/70'}`}>
-                    <span className="w-12 shrink-0 tabular-nums text-white/50">
-                      {new Date(program.start).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                    <span className="truncate">{program.title}</span>
-                    <ArchiveMark visible={(focusedChannel?.catchupDays || 0) > 0 && program.end <= now.getTime()} />
-                  </div>
-                )
-              })}
-              {!dayPrograms.length ? <div className="px-2 py-4 text-sm text-white/40">Нет программы</div> : null}
-            </div>
-          </aside>
-        ) : null}
-
-        {liveGuideView === 'schedule' ? (
+        {liveGuideView === 'channels' || liveGuideView === 'schedule' ? (
           <>
-            <aside className="flex w-[min(420px,38vw)] flex-col bg-black/40 backdrop-blur-[2px]">
-              <div className="flex items-center gap-3 px-4 py-3">
-                <LogoMark name={focusedChannel?.name} logo={focusedChannel?.logo} size={36} />
-                <div className="min-w-0 text-[15px] font-medium">
+            <aside className="flex w-[min(260px,24vw)] flex-col bg-black/35 backdrop-blur-[2px]">
+              <div className="flex items-center gap-3 px-3 py-3">
+                <LogoMark name={focusedChannel?.name} logo={focusedChannel?.logo} size={32} />
+                <div className="min-w-0 truncate text-[14px] font-medium">
                   {focusedChannel?.number} {focusedChannel?.displayName}
                 </div>
               </div>
@@ -607,54 +627,54 @@ export function LiveGuideOverlay() {
                 {dayPrograms.map((program, index) => {
                   const hovered = focusCol === 'programs' && index === programCursor
                   const current = program.start <= now.getTime() && now.getTime() < program.end
+                  const past = program.end <= now.getTime()
                   return (
                     <button
                       key={program.id || program.start}
                       type="button"
                       onClick={() => {
                         setProgramCursor(index)
+                        setFocusCol('programs')
                         playProgram(focusedChannel, program)
                       }}
                       onMouseEnter={() => {
                         setProgramCursor(index)
                         setFocusCol('programs')
                       }}
-                      className={`remote-hit mb-0.5 flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-[14px] ${
+                      className={`remote-hit mb-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] ${
                         hovered ? 'bg-accent/75' : current ? 'bg-white/10' : 'text-white/75 hover:bg-white/8'
                       }`}
                     >
-                      <span className="w-12 shrink-0 tabular-nums text-white/55">
+                      <span className="w-11 shrink-0 tabular-nums text-white/55">
                         {new Date(program.start).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
                       </span>
-                      <span className="min-w-0 flex-1 truncate">{program.title}</span>
-                      <ArchiveMark visible={(focusedChannel?.catchupDays || 0) > 0 && program.end <= now.getTime()} />
+                      <MarqueeText text={program.title} active={hovered || current} />
+                      <ArchiveMark visible={past} />
                     </button>
                   )
                 })}
-                {!dayPrograms.length ? <div className="px-3 py-6 text-sm text-white/40">Нет программы на этот день</div> : null}
+                {!dayPrograms.length ? <div className="px-2 py-4 text-sm text-white/40">Нет программы на этот день</div> : null}
               </div>
             </aside>
-            <aside className="flex w-[150px] flex-col bg-black/35 backdrop-blur-[2px]">
-              <div className="px-3 py-3 text-[12px] uppercase tracking-wider text-white/35">Дни</div>
-              <div className="scroll-thin flex-1 overflow-y-auto px-2 pb-3">
-                {days.map((day, index) => {
-                  const hovered = focusCol === 'days' && index === dayCursor
-                  return (
-                    <button
-                      key={day}
-                      type="button"
-                      onClick={() => {
-                        setDayCursor(index)
-                        setFocusCol('days')
-                      }}
-                      className={`remote-hit mb-0.5 w-full rounded-md px-2 py-2 text-left text-[13px] ${
-                        hovered ? 'bg-accent/75' : index === dayCursor ? 'text-sky-300' : 'text-white/70 hover:bg-white/8'
-                      }`}
-                    >
-                      {formatDayShort(day)}
-                    </button>
-                  )
-                })}
+            <aside className="flex w-[84px] shrink-0 flex-col bg-black/30 backdrop-blur-[2px]">
+              <div className="px-1 py-3 text-center text-[11px] uppercase tracking-wider text-white/35">Дни</div>
+              <div className="scroll-thin flex-1 overflow-y-auto px-1 pb-3">
+                {days.map((day, index) => (
+                  <DayButton
+                    key={day}
+                    day={day}
+                    hovered={focusCol === 'days' && index === dayCursor}
+                    selected={index === dayCursor}
+                    onClick={() => {
+                      setDayCursor(index)
+                      setFocusCol('days')
+                    }}
+                    onEnter={() => {
+                      setDayCursor(index)
+                      setFocusCol('days')
+                    }}
+                  />
+                ))}
               </div>
             </aside>
           </>

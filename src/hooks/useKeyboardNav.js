@@ -114,7 +114,7 @@ export function useKeyboardNav() {
         return
       }
 
-      if (uiScreen === 'menu' || uiScreen === 'settings' || uiScreen === 'recordings' || uiScreen === 'multiview') {
+      if (uiScreen === 'menu' || uiScreen === 'settings' || uiScreen === 'recordings' || uiScreen === 'multiview' || uiScreen === 'history') {
         return
       }
 
