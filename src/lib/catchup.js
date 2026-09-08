@@ -28,12 +28,24 @@ function fillTemplate(template, startMs, endMs) {
     .replaceAll('${timestamp}', String(utc))
 }
 
-function xtreamTimeshift(url, startMs, endMs) {
-  const match = String(url).match(/^(https?:\/\/[^/]+)\/(?:live\/)?([^/]+)\/([^/]+)\/(\d+)(?:\.(m3u8|ts|mkv))?\/?(?:\?.*)?$/i)
-  if (!match) return ''
-  const [, host, user, pass, id] = match
+function parseXtream(url) {
+  const text = String(url || '')
+  const match = text.match(
+    /^(https?:\/\/[^/]+)\/(?:live|play)\/([^/]+)\/([^/]+)\/(\d+)(?:\.(m3u8|ts|mkv))?(?:\/(?:index|video)\.(m3u8|ts))?(?:\/)?(?:\?.*)?$/i,
+  )
+  if (match) return { host: match[1], user: match[2], pass: match[3], id: match[4] }
+  const short = text.match(/^(https?:\/\/[^/]+)\/([^/]+)\/([^/]+)\/(\d+)(?:\.(m3u8|ts|mkv))?(?:\/)?(?:\?.*)?$/i)
+  if (short && !/^(timeshift|hls|play|live)$/i.test(short[2])) {
+    return { host: short[1], user: short[2], pass: short[3], id: short[4] }
+  }
+  return null
+}
+
+function xtreamTimeshift(url, startMs, endMs, ext = 'm3u8') {
+  const parsed = parseXtream(url)
+  if (!parsed) return ''
   const duration = Math.max(1, Math.round((endMs - startMs) / 60000))
-  return `${host}/timeshift/${user}/${pass}/${duration}/${xtreamStamp(startMs)}/${id}.m3u8`
+  return `${parsed.host}/timeshift/${parsed.user}/${parsed.pass}/${duration}/${xtreamStamp(startMs)}/${parsed.id}.${ext}`
 }
 
 function flussonicTimeshift(url, startMs, endMs) {
@@ -45,22 +57,32 @@ function flussonicTimeshift(url, startMs, endMs) {
   return ''
 }
 
-export function buildCatchupUrl(channel, startMs, endMs) {
-  if (!channel?.url || !startMs) return ''
-  const finish = endMs && endMs > startMs ? endMs : startMs + 60 * 60 * 1000
-  const type = String(channel.catchupType || channel.catchup || '').toLowerCase()
-  if (channel.catchupSource) return fillTemplate(channel.catchupSource, startMs, finish)
-
-  if (type.includes('flussonic')) return flussonicTimeshift(channel.url, startMs, finish) || appendUtc(channel.url, startMs, finish)
-  const shifted = xtreamTimeshift(channel.url, startMs, finish)
-  if (shifted) return shifted
-  if (type === 'append' || type === 'default' || !type) return appendUtc(channel.url, startMs, finish)
-  return appendUtc(channel.url, startMs, finish)
+function appendUtc(url, startMs, endMs) {
+  const clean = String(url).replace(/[?&](utc|lutc|duration)=\d+/gi, '').replace(/\?&/, '?').replace(/[?&]$/, '')
+  const join = clean.includes('?') ? '&' : '?'
+  return `${clean}${join}utc=${toUtcSeconds(startMs)}&lutc=${toUtcSeconds(endMs)}`
 }
 
-function appendUtc(url, startMs, endMs) {
-  const join = url.includes('?') ? '&' : '?'
-  return `${url}${join}utc=${toUtcSeconds(startMs)}&lutc=${toUtcSeconds(endMs)}`
+export function catchupUrlCandidates(channel, startMs, endMs) {
+  if (!channel?.url || !startMs) return []
+  const finish = endMs && endMs > startMs ? endMs : startMs + 60 * 60 * 1000
+  const type = String(channel.catchupType || channel.catchup || '').toLowerCase()
+  const urls = []
+  const add = (value) => {
+    if (value && !urls.includes(value)) urls.push(value)
+  }
+
+  if (channel.catchupSource) add(fillTemplate(channel.catchupSource, startMs, finish))
+  if (type.includes('flussonic')) add(flussonicTimeshift(channel.url, startMs, finish))
+  add(xtreamTimeshift(channel.url, startMs, finish, 'm3u8'))
+  add(xtreamTimeshift(channel.url, startMs, finish, 'ts'))
+  add(flussonicTimeshift(channel.url, startMs, finish))
+  add(appendUtc(channel.url, startMs, finish))
+  return urls
+}
+
+export function buildCatchupUrl(channel, startMs, endMs) {
+  return catchupUrlCandidates(channel, startMs, endMs)[0] || ''
 }
 
 export function canPlayArchive(channel, program, now = Date.now(), extraDays = 0) {

@@ -147,6 +147,7 @@ export function LiveGuideOverlay() {
   const openedRef = useRef(false)
   const okTimer = useRef(0)
   const okHeld = useRef(false)
+  const alignLiveRef = useRef(true)
 
   const list = useMemo(() => {
     const hidden = settings.hiddenGroups || []
@@ -217,6 +218,7 @@ export function LiveGuideOverlay() {
     setChannelCursor(index)
     setDaysOpen(false)
     setFocusCol(liveGuideView === 'groups' ? 'groups' : 'channels')
+    alignLiveRef.current = true
     requestAnimationFrame(() => {
       const el = channelRef.current
       if (!el) return
@@ -233,6 +235,7 @@ export function LiveGuideOverlay() {
     }
     const current = getCurrentProgram(focusedChannel)
     const liveIndex = visiblePrograms.findIndex((item) => item.id === current?.id || (current && item.start === current.start))
+    alignLiveRef.current = true
     setProgramCursor(liveIndex >= 0 ? liveIndex : 0)
   }, [focusedChannel?.id, liveGuideView, visiblePrograms.length])
 
@@ -263,10 +266,22 @@ export function LiveGuideOverlay() {
   }, [liveGuideView])
 
   useEffect(() => {
-    const el = programRef.current?.querySelector(`[data-prog="${programCursor}"]`)
-    if (!el) return
-    el.scrollIntoView({ block: 'nearest' })
-  }, [focusedChannel?.id, liveGuideView, programCursor])
+    const prog = programRef.current?.querySelector(`[data-prog="${programCursor}"]`)
+    if (!prog) return
+    if (!alignLiveRef.current) {
+      prog.scrollIntoView({ block: 'nearest' })
+      return
+    }
+    alignLiveRef.current = false
+    const channel = channelRef.current?.querySelector(`[data-ch="${channelCursor}"]`)
+    const list = programRef.current
+    if (!channel || !list) {
+      prog.scrollIntoView({ block: 'start' })
+      return
+    }
+    const delta = prog.getBoundingClientRect().top - channel.getBoundingClientRect().top
+    list.scrollTop = Math.max(0, list.scrollTop + delta)
+  }, [channelCursor, focusedChannel?.id, liveGuideView, programCursor])
 
   useEffect(() => {
     const el = dayRef.current?.querySelector(`[data-day="${dayCursor}"]`)
@@ -330,11 +345,11 @@ export function LiveGuideOverlay() {
         runMenuItem(channel, items[channelMenu.cursor]?.id)
         return
       }
-      if (liveGuideView === 'schedule' && focusCol === 'programs') {
+      if (liveGuideView === 'schedule' && (focusCol === 'programs' || focusCol === 'days')) {
         playProgram(focusedChannel, focusedProgram)
         return
       }
-      if (focusCol === 'programs') {
+      if (focusCol === 'programs' || focusCol === 'days') {
         playProgram(focusedChannel, focusedProgram)
         return
       }
@@ -447,9 +462,12 @@ export function LiveGuideOverlay() {
         if (dir === 'up' || dir === 'down') {
           const step = dir === 'down' ? 1 : -1
           if (focusCol === 'days') {
+            alignLiveRef.current = false
             setDayCursor((current) => Math.min(days.length - 1, Math.max(0, current + step)))
-          } else if (focusCol === 'programs') setProgramCursor((current) => wrapIndex(current + step, visiblePrograms.length))
-          else moveChannel(step)
+          } else if (focusCol === 'programs') {
+            alignLiveRef.current = false
+            setProgramCursor((current) => wrapIndex(current + step, visiblePrograms.length))
+          } else moveChannel(step)
         }
         return
       }
@@ -556,6 +574,7 @@ export function LiveGuideOverlay() {
             <button
               key={channel.id}
               type="button"
+              data-ch={index}
               style={{ top: index * CHANNEL_ROW, height: CHANNEL_ROW - 4 }}
               onClick={() => {
                 setChannelCursor(index)

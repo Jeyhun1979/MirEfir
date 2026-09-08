@@ -239,7 +239,8 @@ export function useKeyboardNav() {
 
       if (isFullscreen && !liveGuideOpen && selectedChannel && dir === 'down' && !typing) {
         event.preventDefault()
-        window.dispatchEvent(new Event('mirefir:pad-focus'))
+        event.stopPropagation()
+        window.dispatchEvent(new Event('mirefir:pad-down'))
         return
       }
 

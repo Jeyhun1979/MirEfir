@@ -5,7 +5,6 @@ import { useHls } from '../hooks/useHls.js'
 import { useRecorder } from '../hooks/useRecorder.js'
 import { usePlayer } from '../store/PlayerContext.jsx'
 import { ClockOverlay } from './ClockOverlay.jsx'
-import { LogoMark } from './LogoMark.jsx'
 import { arrowDir, isBackKey, isOkKey } from '../lib/remoteKeys.js'
 
 const PAD_MS = 6500
@@ -53,7 +52,9 @@ export function VideoPlayer({ fullscreen = false }) {
   const program = getCurrentProgram(selectedChannel)
   const nextProgram = getNextProgram(selectedChannel)
   const pauseForMulti = uiScreen === 'multiview' && !recordingActive
-  const { error, loading } = useHls(videoRef, pauseForMulti ? '' : streamUrl)
+  const { error, loading } = useHls(videoRef, pauseForMulti ? '' : streamUrl, {
+    fallbacks: pauseForMulti ? [] : playback?.urls || [],
+  })
   const recorder = useRecorder(videoRef, selectedChannel, settings, updateSettings)
   const [showVolume, setShowVolume] = useState(false)
   const [recHint, setRecHint] = useState('')
@@ -85,7 +86,6 @@ export function VideoPlayer({ fullscreen = false }) {
   const actualMs = hasBounds ? Math.min(boundsEnd, Math.max(boundsStart, videoTimeMs)) : liveMs
   const maxMs = archive ? boundsEnd : Math.min(boundsEnd || liveMs, liveMs)
   const displayMs = previewMs == null ? actualMs : previewMs
-  const progress = hasBounds ? Math.min(1, Math.max(0, (actualMs - boundsStart) / durationMs)) : 0
   const displayProgress = hasBounds ? Math.min(1, Math.max(0, (displayMs - boundsStart) / durationMs)) : 0
 
   const showPad = () => {
@@ -185,11 +185,25 @@ export function VideoPlayer({ fullscreen = false }) {
       setButtonCursor(0)
       showPad()
     }
+    const onPadDown = () => {
+      setPadOn(true)
+      setPadFocus((prev) => (prev === 'buttons' ? 'bar' : 'buttons'))
+      setButtonCursor(0)
+      window.clearTimeout(padTimer.current)
+      padTimer.current = window.setTimeout(() => {
+        setPadOn(false)
+        setPadFocus('none')
+        setButtonCursor(0)
+        setPreviewMs(null)
+      }, PAD_MS)
+    }
     window.addEventListener('mirefir:pad', onPad)
     window.addEventListener('mirefir:pad-focus', onPadFocus)
+    window.addEventListener('mirefir:pad-down', onPadDown)
     return () => {
       window.removeEventListener('mirefir:pad', onPad)
       window.removeEventListener('mirefir:pad-focus', onPadFocus)
+      window.removeEventListener('mirefir:pad-down', onPadDown)
     }
   }, [])
 
@@ -205,21 +219,11 @@ export function VideoPlayer({ fullscreen = false }) {
         setPreviewMs(null)
         return
       }
-      if (padFocus === 'none') {
-        if (dir === 'down') {
-          event.preventDefault()
-          event.stopPropagation()
-          setPadFocus('buttons')
-          setButtonCursor(0)
-          showPad()
-        }
-        return
-      }
-      if (dir === 'up' || dir === 'down') {
+      if (padFocus === 'none') return
+      if (dir === 'up') {
         event.preventDefault()
         event.stopPropagation()
-        if (dir === 'down') setPadFocus(padFocus === 'buttons' ? 'bar' : 'bar')
-        else setPadFocus(padFocus === 'bar' ? 'buttons' : 'none')
+        setPadFocus(padFocus === 'bar' ? 'buttons' : 'none')
         showPad()
         return
       }
@@ -446,60 +450,13 @@ export function VideoPlayer({ fullscreen = false }) {
         </div>
       ) : null}
 
-      {liveGuideOpen ? null : (
-      <div className="pointer-events-none absolute inset-x-0 top-0 bg-gradient-to-b from-black/70 to-transparent p-4">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            <LogoMark name={selectedChannel?.name || 'TV'} logo={selectedChannel?.logo} size={44} />
-            <div>
-              <div className="flex items-center gap-2 text-[13px] text-white/70">
-                <span className="inline-flex items-center gap-1 text-live">
-                  <span className="live-dot h-1.5 w-1.5 rounded-full bg-live" />
-                  {playback?.mode === 'archive' ? 'АРХИВ' : 'LIVE'}
-                </span>
-                <span>{selectedChannel?.number}</span>
-                {recorder.active ? (
-                  <span className="inline-flex items-center gap-1 text-red-400">
-                    <span className="live-dot h-1.5 w-1.5 rounded-full bg-red-500" />
-                    REC
-                  </span>
-                ) : null}
-              </div>
-              <div className="text-lg font-semibold">{selectedChannel?.displayName}</div>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            {selectedChannel ? (
-              <>
-                <button
-                  type="button"
-                  className={`pointer-events-auto rounded-lg px-3 py-1.5 text-xs font-semibold ${
-                    pipOn ? 'bg-accent' : 'bg-white/15 hover:bg-white/25'
-                  }`}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    togglePip()
-                  }}
-                >
-                  PiP
-                </button>
-                <button
-                  type="button"
-                  className={`pointer-events-auto rounded-lg px-3 py-1.5 text-xs font-semibold ${
-                    recorder.active ? 'bg-red-600' : 'bg-white/15 hover:bg-white/25'
-                  }`}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    toggleRecord()
-                  }}
-                >
-                  {recorder.active ? 'Стоп' : 'REC'}
-                </button>
-              </>
-            ) : null}
-          </div>
+      {liveGuideOpen || !recorder.active ? null : (
+        <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-end p-4">
+          <span className="inline-flex items-center gap-1 rounded-lg bg-black/50 px-2 py-1 text-[12px] text-red-400">
+            <span className="live-dot h-1.5 w-1.5 rounded-full bg-red-500" />
+            REC
+          </span>
         </div>
-      </div>
       )}
 
       {seekHud ? (
@@ -554,7 +511,10 @@ export function VideoPlayer({ fullscreen = false }) {
 
       {liveGuideOpen ? null : (
       <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-4">
-        <div className="text-sm text-white/90">{program?.title || playback?.title || 'Прямой эфир'}</div>
+        <div className="text-sm text-white/90">
+          {archive ? 'Архив · ' : ''}
+          {program?.title || playback?.title || 'Прямой эфир'}
+        </div>
         <div className="text-xs text-white/50">
           {hasBounds ? formatRange(boundsStart, boundsEnd) : selectedChannel?.group}
           {nextProgram && !archive ? `  ·  далее ${nextProgram.title}` : ''}
@@ -589,23 +549,21 @@ export function VideoPlayer({ fullscreen = false }) {
                 className="absolute inset-y-0 left-0 rounded-full bg-accent"
                 style={{ width: `${displayProgress * 100}%` }}
               />
-              <div
-                className="absolute top-1/2 z-10 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-accent shadow-md"
-                style={{ left: `${displayProgress * 100}%` }}
-              />
+              {padFocus === 'bar' ? (
+                <div
+                  className="absolute top-1/2 z-10 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-accent shadow-md"
+                  style={{ left: `${displayProgress * 100}%` }}
+                />
+              ) : null}
             </div>
           </div>
-        ) : (
-          <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/15">
-            <div className="h-full rounded-full bg-accent" style={{ width: `${progress * 100}%` }} />
-          </div>
-        )}
+        ) : null}
         {recHint || recorder.error ? (
           <div className="mt-2 text-[11px] text-red-300">{recHint || recorder.error}</div>
         ) : null}
         <div className="mt-2 text-[11px] text-white/35">
           {fullscreen || focusZone === 'player'
-            ? 'OK — панель · ↓ меню · ← гид · ←→ перемотка на линии · Назад — закрыть'
+            ? 'OK — панель · ↓ меню · ещё ↓ полоса · ← гид · ←→ перемотка на линии · Назад — закрыть'
             : 'Enter — на весь экран · ← гид · P — PiP · V — голос'}
         </div>
       </div>

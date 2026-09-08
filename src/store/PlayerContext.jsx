@@ -3,7 +3,7 @@ import { getCurrentProgram, getNextProgram } from '../lib/epg.js'
 import { collectGroups, loadPlaylistFromFile, loadPlaylistFromUrl, parseM3U } from '../lib/m3uParser.js'
 import { bindEpgToChannels, loadXmltv, mergeXmltv } from '../lib/xmltv.js'
 import { decodeCloudCode, encodeCloudCode } from '../lib/cloudCode.js'
-import { buildCatchupUrl, canPlayArchive } from '../lib/catchup.js'
+import { buildCatchupUrl, catchupUrlCandidates, canPlayArchive } from '../lib/catchup.js'
 import {
   applyBackup,
   buildBackup,
@@ -472,7 +472,8 @@ export function PlayerProvider({ children }) {
         setError('Архив для этого канала недоступен')
         return false
       }
-      const url = buildCatchupUrl(channel, program.start, program.end)
+      const urls = catchupUrlCandidates(channel, program.start, program.end)
+      const url = urls[0] || buildCatchupUrl(channel, program.start, program.end)
       if (!url) {
         setError('Не удалось собрать ссылку архива')
         return false
@@ -483,6 +484,7 @@ export function PlayerProvider({ children }) {
       rememberChannel(channel)
       setStreamOverride({
         url,
+        urls,
         mode: 'archive',
         start: program.start,
         end: program.end,
@@ -529,11 +531,13 @@ export function PlayerProvider({ children }) {
       const nextEnd = nextStart + span
       const channel = channels.find((item) => item.id === current.channelId)
       if (!channel) return current
-      const url = buildCatchupUrl(channel, nextStart, nextEnd)
+      const urls = catchupUrlCandidates(channel, nextStart, nextEnd)
+      const url = urls[0] || buildCatchupUrl(channel, nextStart, nextEnd)
       if (!url) return current
       return {
         ...current,
         url,
+        urls,
         start: nextStart,
         end: nextEnd,
         originStart: current.originStart || current.start,

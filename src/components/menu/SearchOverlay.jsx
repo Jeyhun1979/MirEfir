@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSpeechSearch } from '../../hooks/useSpeechSearch.js'
+import { arrowDir, isBackKey, isOkKey } from '../../lib/remoteKeys.js'
 import { usePlayer } from '../../store/PlayerContext.jsx'
 
 export function SearchOverlay() {
@@ -16,11 +17,15 @@ export function SearchOverlay() {
     settings,
   } = usePlayer()
   const inputRef = useRef(null)
+  const listRef = useRef(null)
+  const [cursor, setCursor] = useState(-1)
+  const results = visibleChannels.slice(0, 40)
 
   const onVoiceText = useCallback(
     (text) => {
       setListMode('live')
       setSearchQuery(text)
+      setCursor(-1)
     },
     [setListMode, setSearchQuery],
   )
@@ -28,8 +33,15 @@ export function SearchOverlay() {
   const speech = useSpeechSearch(onVoiceText, settings.language === 'en' ? 'en-US' : 'ru-RU')
 
   useEffect(() => {
-    if (uiScreen === 'search') inputRef.current?.focus()
+    if (uiScreen === 'search') {
+      setCursor(-1)
+      inputRef.current?.focus()
+    }
   }, [uiScreen])
+
+  useEffect(() => {
+    setCursor(-1)
+  }, [searchQuery])
 
   const startVoice = speech.start
   useEffect(() => {
@@ -38,13 +50,56 @@ export function SearchOverlay() {
     startVoice()
   }, [setVoiceArmed, startVoice, uiScreen, voiceArmed])
 
+  useEffect(() => {
+    if (cursor < 0) return
+    const node = listRef.current?.querySelector(`[data-hit="${cursor}"]`)
+    node?.focus()
+    node?.scrollIntoView({ block: 'nearest' })
+  }, [cursor])
+
   if (uiScreen !== 'search') return null
+
+  const pick = (channel) => {
+    if (!channel) return
+    selectChannel(channel.id)
+    closeOverlays()
+  }
+
+  const onKeyDown = (event) => {
+    const dir = arrowDir(event)
+    if (isBackKey(event)) return
+    if (dir === 'down') {
+      event.preventDefault()
+      event.stopPropagation()
+      if (!results.length) return
+      setCursor((current) => Math.min(results.length - 1, current < 0 ? 0 : current + 1))
+      inputRef.current?.blur()
+      return
+    }
+    if (dir === 'up') {
+      event.preventDefault()
+      event.stopPropagation()
+      if (cursor <= 0) {
+        setCursor(-1)
+        inputRef.current?.focus()
+        return
+      }
+      setCursor((current) => current - 1)
+      return
+    }
+    if (isOkKey(event) && cursor >= 0) {
+      event.preventDefault()
+      event.stopPropagation()
+      pick(results[cursor])
+    }
+  }
 
   return (
     <div className="absolute inset-0 z-50 flex items-start justify-center bg-black/75 p-8" onClick={closeOverlays}>
       <div
         className="w-full max-w-2xl rounded-2xl border border-white/10 bg-[#10151e] p-5"
         onClick={(event) => event.stopPropagation()}
+        onKeyDown={onKeyDown}
       >
         <div className="mb-3 text-lg font-semibold">Поиск канала</div>
         <div className="mb-4 flex gap-2">
@@ -55,8 +110,11 @@ export function SearchOverlay() {
               setListMode('live')
               setSearchQuery(event.target.value)
             }}
+            onKeyDown={onKeyDown}
             placeholder="Название канала или нажмите микрофон"
-            className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm outline-none focus:border-accent"
+            className={`min-w-0 flex-1 rounded-xl border bg-black/40 px-3 py-2.5 text-sm outline-none ${
+              cursor < 0 ? 'border-accent' : 'border-white/10'
+            }`}
           />
           <button
             type="button"
@@ -74,16 +132,16 @@ export function SearchOverlay() {
         </div>
         {speech.listening ? <div className="mb-3 text-xs text-accent">Слушаю… говорите название канала</div> : null}
         {speech.error ? <div className="mb-3 text-xs text-red-300">{speech.error}</div> : null}
-        <div className="scroll-thin max-h-80 overflow-y-auto">
-          {visibleChannels.slice(0, 40).map((channel) => (
+        <div ref={listRef} className="scroll-thin max-h-80 overflow-y-auto">
+          {results.map((channel, index) => (
             <button
               key={channel.id}
               type="button"
-              onClick={() => {
-                selectChannel(channel.id)
-                closeOverlays()
-              }}
-              className="remote-hit flex w-full items-center justify-between rounded-lg px-3 text-left hover:bg-white/5"
+              data-hit={index}
+              onClick={() => pick(channel)}
+              className={`remote-hit flex w-full items-center justify-between rounded-lg px-3 text-left ${
+                cursor === index ? 'bg-accent/80' : 'hover:bg-white/5'
+              }`}
             >
               <span>{channel.displayName}</span>
               <span className="text-xs text-white/35">{channel.group}</span>
