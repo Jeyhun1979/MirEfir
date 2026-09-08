@@ -115,14 +115,26 @@ function applyDownloadedFile(filePath) {
 
   const lines = [
     '@echo off',
+    'setlocal EnableExtensions',
     `echo apply-start %date% %time%>>${quote(log)}`,
-    'ping 127.0.0.1 -n 5 >nul',
+    'ping 127.0.0.1 -n 4 >nul',
     `"%SystemRoot%\\System32\\taskkill.exe" /F /IM MirEfir.exe /T >>${quote(log)} 2>&1`,
     'ping 127.0.0.1 -n 4 >nul',
     `echo running-setup>>${quote(log)}`,
-    `${quote(setup)} /S /NCRC`,
+    `start /wait "" ${quote(setup)} /S /NCRC --updated`,
     `echo setup-exit %ERRORLEVEL%>>${quote(log)}`,
-    'ping 127.0.0.1 -n 6 >nul',
+    'set waits=0',
+    ':wait_setup',
+    'tasklist /FO CSV /NH 2>nul | find /I "MirEfir-Setup" >nul',
+    'if errorlevel 1 goto setup_gone',
+    'set /a waits+=1',
+    'if %waits% GEQ 90 goto setup_gone',
+    'ping 127.0.0.1 -n 3 >nul',
+    'goto wait_setup',
+    ':setup_gone',
+    `echo setup-gone waits=%waits%>>${quote(log)}`,
+    `"%SystemRoot%\\System32\\taskkill.exe" /F /IM MirEfir.exe /T >>${quote(log)} 2>&1`,
+    'ping 127.0.0.1 -n 4 >nul',
     `if exist ${quote(exe)} start "" ${quote(exe)}`,
     `echo relaunched>>${quote(log)}`,
     `del /f /q ${quote(setup)} >nul 2>&1`,
@@ -130,8 +142,7 @@ function applyDownloadedFile(filePath) {
     'del /f /q "%~f0" >nul 2>&1',
   ]
   fs.writeFileSync(bat, lines.join('\r\n'), 'utf8')
-  const vbsPath = bat.replace(/\\/g, '\\\\')
-  fs.writeFileSync(vbs, `CreateObject("WScript.Shell").Run "${vbsPath}", 0, False\r\n`, 'utf8')
+  fs.writeFileSync(vbs, `CreateObject("WScript.Shell").Run ${JSON.stringify(bat)}, 0, False\r\n`, 'utf8')
   logUpdate(`spawn hidden installer ${setup}`)
   spawn('wscript.exe', ['//B', '//Nologo', vbs], {
     detached: true,
@@ -144,7 +155,7 @@ function applyDownloadedFile(filePath) {
       if (!win.isDestroyed()) win.destroy()
     }
     app.exit(0)
-  }, 600)
+  }, 800)
   return true
 }
 
