@@ -6,20 +6,100 @@ export function parseXmltvTime(value) {
   const text = String(value || '').trim()
   const match = text.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(?:\s*([+-])(\d{2})(\d{2}))?/)
   if (!match) return Date.parse(text) || 0
-  const zone = match[7] ? `${match[7]}${match[8]}:${match[9]}` : 'Z'
-  return Date.parse(`${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}${zone}`) || 0
+  if (match[7]) {
+    return Date.parse(`${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}${match[7]}${match[8]}:${match[9]}`) || 0
+  }
+  return new Date(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    Number(match[4]),
+    Number(match[5]),
+    Number(match[6]),
+  ).getTime() || 0
 }
 
 export function normalizeEpgKey(name) {
-  return String(name || '')
+  return foldEpgKey(name)
+}
+
+function foldEpgKey(name, { keepShift = false, keepParen = false } = {}) {
+  let text = String(name || '')
     .toLowerCase()
     .replace(/ё/g, 'е')
+  if (!keepShift) text = text.replace(/\+\d+/g, ' ')
+  if (!keepParen) text = text.replace(/\([^)]*\)/g, ' ')
+  else text = text.replace(/[()]/g, ' ')
+  return text
     .replace(/\b(uhd|fhd|hd|sd|4k|hevc|hdr|50|60)\b/gi, ' ')
-    .replace(/\+\d+/g, ' ')
-    .replace(/\([^)]*\)/g, ' ')
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(keepShift ? /[^\p{L}\p{N}+]+/gu : /[^\p{L}\p{N}]+/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+function isShiftedEpgName(name) {
+  return /\+\d+/.test(String(name || ''))
+}
+
+function channelShiftRank(meta) {
+  return (meta?.names || []).some(isShiftedEpgName) ? 2 : 0
+}
+
+function putEpgIndex(index, key, id, rank) {
+  if (!key) return
+  const prev = index.get(key)
+  if (!prev || rank < prev.rank) index.set(key, { id, rank })
+}
+
+function lookupEpgIndex(index, keys) {
+  for (const key of keys) {
+    if (key && index.has(key)) return index.get(key).id
+  }
+  return ''
+}
+
+function uniqueEpgIds(index, keys) {
+  const ids = []
+  const seen = new Set()
+  for (const key of keys) {
+    if (!key || !index.has(key)) continue
+    const id = index.get(key).id
+    if (seen.has(id)) continue
+    seen.add(id)
+    ids.push(id)
+  }
+  return ids
+}
+
+function preferCanonicalEpg(xmltv, ids) {
+  const list = ids.filter(Boolean)
+  return list.find((id) => channelShiftRank(xmltv.channels?.[id]) === 0) || list[0] || ''
+}
+
+function candidateKeys(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return []
+  return [
+    raw.toLowerCase(),
+    foldEpgKey(raw, { keepShift: true, keepParen: true }),
+    foldEpgKey(raw, { keepShift: true }),
+    foldEpgKey(raw),
+  ]
+}
+
+function prefixFallback(index, keys) {
+  for (const key of keys) {
+    const shifted = /\+\d+/.test(key)
+    const words = String(key || '')
+      .split(' ')
+      .filter(Boolean)
+    for (let size = words.length; size > 1; size -= 1) {
+      const chunk = words.slice(0, size).join(' ')
+      if (shifted && !/\+\d+/.test(chunk)) continue
+      if (index.has(chunk)) return index.get(chunk).id
+    }
+  }
+  return ''
 }
 
 function decodeXml(value) {
@@ -135,41 +215,29 @@ export function bindEpgToChannels(playlistChannels, xmltv) {
   const nameIndex = new Map()
 
   for (const meta of Object.values(xmltv.channels || {})) {
-    const keys = [meta.id, ...(meta.names || [])]
-    for (const raw of keys) {
-      const key = normalizeEpgKey(raw)
-      if (key && !nameIndex.has(key)) nameIndex.set(key, meta.id)
+    const rank = channelShiftRank(meta)
+    putEpgIndex(nameIndex, String(meta.id || '').toLowerCase(), meta.id, 0)
+    for (const raw of meta.names || []) {
+      putEpgIndex(nameIndex, foldEpgKey(raw, { keepShift: true, keepParen: true }), meta.id, rank)
+      putEpgIndex(nameIndex, foldEpgKey(raw, { keepShift: true }), meta.id, rank)
+      putEpgIndex(nameIndex, foldEpgKey(raw), meta.id, rank)
     }
   }
 
   let matched = 0
   const epg = {}
   const channels = playlistChannels.map((channel) => {
-    const candidates = [channel.tvgId, channel.tvgName, channel.displayName, channel.name]
-      .map((item) => normalizeEpgKey(item))
-      .filter(Boolean)
-
-    let epgId = ''
-    for (const key of candidates) {
-      if (nameIndex.has(key)) {
-        epgId = nameIndex.get(key)
-        break
-      }
-    }
-
-    if (!epgId) {
-      for (const key of candidates) {
-        const words = key.split(' ')
-        for (let size = words.length; size > 1; size -= 1) {
-          const chunk = words.slice(0, size).join(' ')
-          if (nameIndex.has(chunk)) {
-            epgId = nameIndex.get(chunk)
-            break
-          }
-        }
-        if (epgId) break
-      }
-    }
+    const idKeys = candidateKeys(channel.tvgId)
+    const nameKeys = [
+      ...candidateKeys(channel.tvgName),
+      ...candidateKeys(channel.displayName),
+      ...candidateKeys(channel.name),
+    ]
+    const playlistShifted = [channel.tvgName, channel.displayName, channel.name].some(isShiftedEpgName)
+    let epgId = playlistShifted
+      ? lookupEpgIndex(nameIndex, [...nameKeys, ...idKeys])
+      : preferCanonicalEpg(xmltv, [...uniqueEpgIds(nameIndex, idKeys), ...uniqueEpgIds(nameIndex, nameKeys)])
+    if (!epgId) epgId = prefixFallback(nameIndex, [...nameKeys, ...idKeys])
 
     const programs = (epgId && xmltv.programs[epgId]) || []
     if (programs.length) matched += 1

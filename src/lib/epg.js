@@ -66,15 +66,27 @@ export function collectProgramDays(programs, now = Date.now()) {
   return [...days].sort((a, b) => a - b)
 }
 
+export function formatDayLong(ts) {
+  const date = new Date(ts)
+  const week = date.toLocaleDateString('ru-RU', { weekday: 'long' })
+  const month = date.toLocaleDateString('ru-RU', { month: 'long' })
+  const text = `${week}, ${date.getDate()} ${month}`
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
 export function collectGuideDays({ programs, now = Date.now(), archiveDays = 0, archiveEnabled = false, catchupDays = 0, epgDays = 7 }) {
   const today = startOfDay(now)
   const dayMs = 24 * 60 * 60 * 1000
-  const keep = Math.max(Number(epgDays) || 0, archiveEnabled ? Number(archiveDays) || 0 : 0, Number(catchupDays) || 0)
+  const past = Math.max(Number(epgDays) || 0, archiveEnabled ? Number(archiveDays) || 0 : 0, Number(catchupDays) || 0, 1)
+  const future = Math.max(Number(epgDays) || 0, 7)
+  const from = today - past * dayMs
+  const to = today + future * dayMs
   const days = new Set([today])
-  for (let i = 1; i <= keep; i += 1) days.add(today - i * dayMs)
+  for (let i = 1; i <= past; i += 1) days.add(today - i * dayMs)
+  for (let i = 1; i <= future; i += 1) days.add(today + i * dayMs)
   for (const item of programs || []) {
     const day = startOfDay(item.start)
-    if (day >= today - keep * dayMs) days.add(day)
+    if (day >= from && day <= to) days.add(day)
   }
   return [...days].sort((a, b) => a - b)
 }

@@ -70,7 +70,10 @@ export function PlaylistModal() {
   }
 
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={close}>
+    <div
+      className={`absolute inset-0 z-50 flex items-center justify-center p-4 ${needsSetup ? 'bg-black' : 'bg-black/70'}`}
+      onClick={close}
+    >
       <div
         className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#10151e] p-5 shadow-2xl"
         onClick={(event) => event.stopPropagation()}

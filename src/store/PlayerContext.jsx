@@ -152,7 +152,8 @@ export function PlayerProvider({ children }) {
   const [selectedGroupId, setSelectedGroupId] = useState('all')
   const [selectedChannelId, setSelectedChannelId] = useState('')
   const [focusZone, setFocusZone] = useState('channels')
-  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [hasPlaylist, setHasPlaylist] = useState(() => hasSavedPlaylist())
+  const [isFullscreen, setIsFullscreen] = useState(() => hasSavedPlaylist())
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [watchHistory, setWatchHistory] = useState(readHistory)
   const recentIds = useMemo(() => watchHistory.map((item) => item.id), [watchHistory])
@@ -257,10 +258,11 @@ export function PlayerProvider({ children }) {
     setListMode(restored.listMode)
     setSelectedGroupId(restored.groupId)
     setSelectedChannelId(restored.channelId)
+    if (parsed.channels?.length) setHasPlaylist(true)
     if (!opts.silent) {
       setFocusZone('channels')
-      setIsFullscreen(false)
       setError('')
+      if (parsed.channels?.length) setIsFullscreen(true)
     }
 
     if (xmltvRef.current) {
@@ -885,7 +887,6 @@ export function PlayerProvider({ children }) {
   }, [channels, listMode, selectedChannelId, selectedGroupId])
 
   const bootstrapped = useRef(false)
-  const [bootReady, setBootReady] = useState(false)
 
   useEffect(() => {
     if (bootstrapped.current) return
@@ -897,13 +898,16 @@ export function PlayerProvider({ children }) {
       if (cancelled) return
       setFavorites(readFavorites())
       setWatchHistory(readHistory())
+      if (hasSavedPlaylist()) {
+        setHasPlaylist(true)
+        setIsFullscreen(true)
+      }
 
       const url = readPlaylistUrl()
       const savedText = readPlaylistText()
       setPlaylistUrl(url)
       setEpgUrl(readEpgUrl() || loadSettings().epgUrl)
       setSettingsState(loadSettings())
-      setBootReady(true)
       if (!url && !savedText) {
         setStatus('Добавьте плейлист')
         setIsModalOpen(true)
@@ -956,7 +960,7 @@ export function PlayerProvider({ children }) {
   }, [applyPlaylist, importEpg])
 
   const value = {
-    needsSetup: bootReady && channels.length === 0 && !hasSavedPlaylist(),
+    needsSetup: !hasPlaylist,
     playlistName,
     playlistUrl,
     epgUrl,

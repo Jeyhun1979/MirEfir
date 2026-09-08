@@ -50,7 +50,10 @@ export function useHls(videoRef, src, options = {}) {
     const video = videoRef.current
     if (!video) return undefined
 
-    const onWaiting = () => setLoading(true)
+    const onWaiting = () => {
+      if (video.readyState >= 2 && video.currentTime > 0.3) return
+      setLoading(true)
+    }
     const onReady = () => setLoading(false)
 
     video.addEventListener('waiting', onWaiting)
@@ -97,7 +100,9 @@ export function useHls(videoRef, src, options = {}) {
         hlsRef.current = hls
         hls.attachMedia(video)
 
+        let netFails = 0
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          netFails = 0
           play()
         })
 
@@ -113,6 +118,13 @@ export function useHls(videoRef, src, options = {}) {
           }
 
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            netFails += 1
+            if (netFails > 2) {
+              hls.stopLoad()
+              setLoading(false)
+              setError(errorMessage(data))
+              return
+            }
             hls.startLoad()
             return
           }
@@ -134,7 +146,14 @@ export function useHls(videoRef, src, options = {}) {
       setError('')
       hls.loadSource(src)
       play()
-      return undefined
+      const watchdog = window.setTimeout(() => {
+        if (id !== requestId.current) return
+        if (video.readyState < 2) {
+          setLoading(false)
+          setError((current) => current || 'Поток не запустился. Архив или сдвиг могли быть недоступны.')
+        }
+      }, 18000)
+      return () => window.clearTimeout(watchdog)
     }
 
     if (hlsRef.current) {

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { APP_VERSION } from '../../lib/appInfo.js'
 import { copyText, shareCloudCode } from '../../lib/cloudCode.js'
-import { eventToken, keyCaption, arrowDir, isBackKey, isTypingTarget } from '../../lib/remoteKeys.js'
+import { eventToken, keyCaption, arrowDir, isBackKey, isOkKey, isTypingTarget } from '../../lib/remoteKeys.js'
 import { ARCHIVE_DAYS, CLOCK_POSITIONS, CLOCK_SIZES, DEFAULT_SETTINGS, KEY_LABELS, enabledEpgUrls, normalizeEpgSources, saveSettings } from '../../lib/settingsStore.js'
 import { pickStorageFolder } from '../../lib/storage.js'
 import { usePlayer } from '../../store/PlayerContext.jsx'
@@ -76,8 +76,16 @@ export function SettingsScreen() {
   const [capturing, setCapturing] = useState('')
   const restoreRef = useRef(null)
   const tabRefs = useRef([])
+  const paneRef = useRef(null)
+  const [pane, setPane] = useState('nav')
+  const [itemIndex, setItemIndex] = useState(0)
   const [cloudCode, setCloudCode] = useState('')
   const [cloudNote, setCloudNote] = useState('')
+
+  const settingNodes = () =>
+    [...(paneRef.current?.querySelectorAll('button, input:not([type="file"]), textarea') || [])].filter(
+      (node) => !node.disabled && node.offsetParent !== null,
+    )
 
   useEffect(() => {
     setPlaylistDraft(playlistUrl || '')
@@ -85,32 +93,107 @@ export function SettingsScreen() {
   }, [playlistUrl, uiScreen])
 
   useEffect(() => {
+    setPane('nav')
+    setItemIndex(0)
+  }, [settingsTab, uiScreen])
+
+  useEffect(() => {
     const index = TABS.findIndex((tab) => tab.id === settingsTab)
     tabRefs.current[index]?.scrollIntoView({ block: 'nearest' })
   }, [settingsTab])
 
   useEffect(() => {
+    const nodes = settingNodes()
+    nodes.forEach((node, index) => {
+      node.classList.toggle('setting-focus', pane === 'content' && index === itemIndex)
+    })
+    if (pane === 'content') nodes[itemIndex]?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [busy, itemIndex, pane, settings, settingsTab, playlistGroups, cloudCode, cloudNote, epgDraft, playlistDraft])
+
+  useEffect(() => {
     if (uiScreen !== 'settings' || capturing) return undefined
+    const activate = (node) => {
+      if (!node) return
+      if (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA') {
+        node.focus()
+        if (node.type === 'checkbox') node.click()
+        return
+      }
+      node.click()
+    }
+
     const onKey = (event) => {
-      if (isTypingTarget(event.target)) return
       const dir = arrowDir(event)
+      const ok = isOkKey(event)
+      if (isTypingTarget(event.target)) {
+        if (isBackKey(event) || dir === 'left') {
+          event.preventDefault()
+          event.stopPropagation()
+          event.target.blur()
+          return
+        }
+        if (dir === 'up' || dir === 'down') {
+          event.preventDefault()
+          event.stopPropagation()
+          event.target.blur()
+          const nodes = settingNodes()
+          if (!nodes.length) return
+          const step = dir === 'down' ? 1 : -1
+          setItemIndex((current) => (current + step + nodes.length) % nodes.length)
+        }
+        return
+      }
+
+      if (pane === 'nav') {
+        if (dir === 'up' || dir === 'down') {
+          event.preventDefault()
+          event.stopPropagation()
+          const index = Math.max(0, TABS.findIndex((tab) => tab.id === settingsTab))
+          const next = TABS[(index + (dir === 'down' ? 1 : -1) + TABS.length) % TABS.length]
+          setSettingsTab(next.id)
+          return
+        }
+        if (dir === 'right' || ok) {
+          event.preventDefault()
+          event.stopPropagation()
+          const nodes = settingNodes()
+          if (!nodes.length) return
+          setPane('content')
+          setItemIndex(0)
+          return
+        }
+        if (isBackKey(event) || dir === 'left') {
+          event.preventDefault()
+          event.stopPropagation()
+          openMenu()
+        }
+        return
+      }
+
+      const nodes = settingNodes()
       if (dir === 'up' || dir === 'down') {
         event.preventDefault()
         event.stopPropagation()
-        const index = Math.max(0, TABS.findIndex((tab) => tab.id === settingsTab))
-        const next = TABS[(index + (dir === 'down' ? 1 : -1) + TABS.length) % TABS.length]
-        setSettingsTab(next.id)
+        if (!nodes.length) return
+        const step = dir === 'down' ? 1 : -1
+        setItemIndex((current) => (current + step + nodes.length) % nodes.length)
         return
       }
-      if (isBackKey(event)) {
+      if (dir === 'left' || isBackKey(event)) {
         event.preventDefault()
         event.stopPropagation()
-        openMenu()
+        setPane('nav')
+        return
+      }
+      if (dir === 'right' || ok) {
+        event.preventDefault()
+        event.stopPropagation()
+        activate(nodes[itemIndex] || nodes[0])
       }
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [capturing, openMenu, setSettingsTab, settingsTab, uiScreen])
+  }, [capturing, itemIndex, openMenu, pane, setSettingsTab, settingsTab, uiScreen])
 
   useEffect(() => {
     if (!capturing) return undefined
@@ -174,9 +257,16 @@ export function SettingsScreen() {
                 tabRefs.current[index] = node
               }}
               type="button"
-              onClick={() => setSettingsTab(tab.id)}
+              onClick={() => {
+                setSettingsTab(tab.id)
+                setPane('nav')
+              }}
               className={`remote-hit w-full px-5 text-left text-[14px] ${
-                settingsTab === tab.id ? 'bg-accent text-white' : 'text-white/65 hover:bg-white/5'
+                settingsTab === tab.id
+                  ? pane === 'nav'
+                    ? 'bg-accent text-white'
+                    : 'bg-white/15 text-white'
+                  : 'text-white/65 hover:bg-white/5'
               }`}
             >
               {tab.title}
@@ -195,6 +285,8 @@ export function SettingsScreen() {
             Закрыть
           </button>
         </div>
+
+        <div ref={paneRef}>
 
         {settingsTab === 'playlists' ? (
           <div>
@@ -729,6 +821,7 @@ export function SettingsScreen() {
             <p>Версия {APP_VERSION}</p>
           </div>
         ) : null}
+        </div>
       </section>
     </div>
   )

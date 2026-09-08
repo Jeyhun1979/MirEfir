@@ -21,7 +21,7 @@ import { useWakeLock } from './hooks/useWakeLock.js'
 import { usePlayer } from './store/PlayerContext.jsx'
 
 export default function App() {
-  const { isFullscreen, goBack, selectedChannel } = usePlayer()
+  const { isFullscreen, goBack, selectedChannel, needsSetup } = usePlayer()
   useKeyboardNav()
   useAirMouse()
   useWakeLock(Boolean(selectedChannel))
@@ -40,6 +40,15 @@ export default function App() {
       handle?.remove()
     }
   }, [goBack])
+
+  if (needsSetup) {
+    return (
+      <div className="relative flex h-full flex-col bg-black text-white">
+        <PlaylistModal />
+        <UpdateDialog />
+      </div>
+    )
+  }
 
   return (
     <div className="relative flex h-full flex-col bg-void text-white">

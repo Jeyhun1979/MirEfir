@@ -17,11 +17,11 @@ const SIZE = {
 
 export function ClockOverlay() {
   const now = useClock(1000)
-  const { settings } = usePlayer()
-  if (!settings.clockEnabled) return null
+  const { settings, liveGuideOpen } = usePlayer()
+  if (!settings.clockEnabled || liveGuideOpen) return null
 
   return (
-    <div className={`pointer-events-none absolute z-[45] font-medium tabular-nums text-white/90 drop-shadow ${POS[settings.clockPosition] || POS['top-right']} ${SIZE[settings.clockSize] || SIZE.md}`}>
+    <div className={`pointer-events-none absolute z-[45] font-medium tabular-nums text-white ${POS[settings.clockPosition] || POS['top-right']} ${SIZE[settings.clockSize] || SIZE.md}`}>
       {formatClock(now)}
     </div>
   )

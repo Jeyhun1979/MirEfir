@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   collectGuideDays,
+  formatDayLong,
   formatDayParts,
   formatRange,
   formatRemaining,
   getProgramProgress,
-  programsOnDay,
   startOfDay,
 } from '../lib/epg.js'
 import { arrowDir, isBackKey, isConfirmKey, isMenuKey } from '../lib/remoteKeys.js'
@@ -14,7 +14,6 @@ import { usePlayer } from '../store/PlayerContext.jsx'
 import { LogoMark } from './LogoMark.jsx'
 
 const CHANNEL_ROW = 72
-const PROGRAM_ROW = 42
 const OVERSCAN = 6
 
 function wrapIndex(index, length) {
@@ -138,11 +137,13 @@ export function LiveGuideOverlay() {
   const [programCursor, setProgramCursor] = useState(0)
   const [groupCursor, setGroupCursor] = useState(0)
   const [dayCursor, setDayCursor] = useState(0)
+  const [daysOpen, setDaysOpen] = useState(false)
   const [focusCol, setFocusCol] = useState('channels')
   const [scrollTop, setScrollTop] = useState(0)
   const [viewport, setViewport] = useState(640)
   const channelRef = useRef(null)
   const programRef = useRef(null)
+  const dayRef = useRef(null)
   const openedRef = useRef(false)
   const okTimer = useRef(0)
   const okHeld = useRef(false)
@@ -173,8 +174,13 @@ export function LiveGuideOverlay() {
     [allPrograms, focusedChannel?.catchupDays, settings.archiveDays, settings.archiveEnabled, settings.epgDays, todayStamp],
   )
   const selectedDay = days[dayCursor] || startOfDay(now.getTime())
-  const dayPrograms = useMemo(() => programsOnDay(allPrograms, selectedDay), [allPrograms, selectedDay])
-  const focusedProgram = dayPrograms[programCursor] || getCurrentProgram(focusedChannel)
+  const visiblePrograms = useMemo(() => {
+    if (!days.length) return allPrograms || []
+    const from = days[0]
+    const to = days[days.length - 1] + 24 * 60 * 60 * 1000
+    return (allPrograms || []).filter((item) => item.start < to && item.end > from)
+  }, [allPrograms, days])
+  const focusedProgram = visiblePrograms[programCursor] || getCurrentProgram(focusedChannel)
   const menuItems = (channel) => {
     if (!channel) return []
     const starred = favorites.includes(channel.id)
@@ -209,6 +215,7 @@ export function LiveGuideOverlay() {
       nextList.findIndex((channel) => channel.id === selectedChannel?.id),
     )
     setChannelCursor(index)
+    setDaysOpen(false)
     setFocusCol(liveGuideView === 'groups' ? 'groups' : 'channels')
     requestAnimationFrame(() => {
       const el = channelRef.current
@@ -220,17 +227,23 @@ export function LiveGuideOverlay() {
   }, [channels, favorites, groups, liveGuideView, recentIds, selectedChannel?.id, selectedGroupId, settings.hiddenGroups])
 
   useEffect(() => {
-    if (!dayPrograms.length) {
+    if (!visiblePrograms.length) {
       setProgramCursor(0)
       return
     }
     const current = getCurrentProgram(focusedChannel)
-    const index = Math.max(
-      0,
-      dayPrograms.findIndex((item) => item.id === current?.id || (current && item.start === current.start)),
-    )
-    setProgramCursor(index)
-  }, [focusedChannel?.id, selectedDay, liveGuideView])
+    const liveIndex = visiblePrograms.findIndex((item) => item.id === current?.id || (current && item.start === current.start))
+    setProgramCursor(liveIndex >= 0 ? liveIndex : 0)
+  }, [focusedChannel?.id, liveGuideView, visiblePrograms.length])
+
+  useEffect(() => {
+    if (focusCol !== 'days' || !visiblePrograms.length) return
+    const current = getCurrentProgram(focusedChannel)
+    const liveIndex = visiblePrograms.findIndex((item) => item.id === current?.id || (current && item.start === current.start))
+    const sameDay = visiblePrograms.findIndex((item) => startOfDay(item.start) === selectedDay)
+    const index = selectedDay === todayStamp && liveIndex >= 0 ? liveIndex : sameDay
+    if (index >= 0) setProgramCursor(index)
+  }, [focusCol, selectedDay, todayStamp, visiblePrograms])
 
   useEffect(() => {
     if (!liveGuideView || !days.length) return
@@ -250,12 +263,16 @@ export function LiveGuideOverlay() {
   }, [liveGuideView])
 
   useEffect(() => {
-    const el = programRef.current
-    if (!el || (focusCol !== 'programs' && liveGuideView !== 'schedule')) return
-    const top = programCursor * PROGRAM_ROW
-    if (top < el.scrollTop) el.scrollTop = top
-    else if (top + PROGRAM_ROW > el.scrollTop + el.clientHeight) el.scrollTop = top + PROGRAM_ROW - el.clientHeight
-  }, [liveGuideView, programCursor])
+    const el = programRef.current?.querySelector(`[data-prog="${programCursor}"]`)
+    if (!el) return
+    el.scrollIntoView({ block: 'nearest' })
+  }, [focusedChannel?.id, liveGuideView, programCursor])
+
+  useEffect(() => {
+    const el = dayRef.current?.querySelector(`[data-day="${dayCursor}"]`)
+    if (!el || focusCol !== 'days') return
+    el.scrollIntoView({ block: 'nearest' })
+  }, [dayCursor, focusCol])
 
   useEffect(() => {
     if (!liveGuideView) return undefined
@@ -403,11 +420,13 @@ export function LiveGuideOverlay() {
         if (dir === 'left' || event.key === settings.keys?.liveGuide) {
           if (focusCol === 'days') {
             setFocusCol('programs')
+            setDaysOpen(false)
             return
           }
           if (focusCol === 'programs') {
             setFocusCol('channels')
             setLiveGuideView('channels')
+            setDaysOpen(false)
             return
           }
           setLiveGuideView('categories')
@@ -419,13 +438,17 @@ export function LiveGuideOverlay() {
             setFocusCol('programs')
             return
           }
-          if (focusCol === 'programs' && days.length) setFocusCol('days')
+          if (focusCol === 'programs' && days.length) {
+            setDaysOpen(true)
+            setFocusCol('days')
+          }
           return
         }
         if (dir === 'up' || dir === 'down') {
           const step = dir === 'down' ? 1 : -1
-          if (focusCol === 'days') setDayCursor((current) => wrapIndex(current + step, days.length))
-          else if (focusCol === 'programs') setProgramCursor((current) => wrapIndex(current + step, dayPrograms.length))
+          if (focusCol === 'days') {
+            setDayCursor((current) => Math.min(days.length - 1, Math.max(0, current + step)))
+          } else if (focusCol === 'programs') setProgramCursor((current) => wrapIndex(current + step, visiblePrograms.length))
           else moveChannel(step)
         }
         return
@@ -480,8 +503,9 @@ export function LiveGuideOverlay() {
     channelMenu,
     channels,
     commitFavoriteMove,
-    dayPrograms.length,
+    visiblePrograms.length,
     days.length,
+    daysOpen,
     focusCol,
     focusedChannel,
     focusedProgram,
@@ -624,59 +648,70 @@ export function LiveGuideOverlay() {
                 </div>
               </div>
               <div ref={programRef} className="scroll-thin flex-1 overflow-y-auto px-2 pb-4">
-                {dayPrograms.map((program, index) => {
+                {visiblePrograms.map((program, index) => {
+                  const day = startOfDay(program.start)
+                  const prevDay = index > 0 ? startOfDay(visiblePrograms[index - 1].start) : null
                   const hovered = focusCol === 'programs' && index === programCursor
                   const current = program.start <= now.getTime() && now.getTime() < program.end
                   const past = program.end <= now.getTime()
                   return (
-                    <button
-                      key={program.id || program.start}
-                      type="button"
-                      onClick={() => {
-                        setProgramCursor(index)
-                        setFocusCol('programs')
-                        playProgram(focusedChannel, program)
-                      }}
-                      onMouseEnter={() => {
-                        setProgramCursor(index)
-                        setFocusCol('programs')
-                      }}
-                      className={`remote-hit mb-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] ${
-                        hovered ? 'bg-accent/75' : current ? 'bg-white/10' : 'text-white/75 hover:bg-white/8'
-                      }`}
-                    >
-                      <span className="w-11 shrink-0 tabular-nums text-white/55">
-                        {new Date(program.start).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                      <MarqueeText text={program.title} active={hovered || current} />
-                      <ArchiveMark visible={past} />
-                    </button>
+                    <div key={program.id || program.start}>
+                      {day !== prevDay ? (
+                        <div className="px-2 py-1.5 text-[13px] font-medium text-sky-300">{formatDayLong(day)}</div>
+                      ) : null}
+                      <button
+                        type="button"
+                        data-prog={index}
+                        onClick={() => {
+                          setProgramCursor(index)
+                          setFocusCol('programs')
+                          playProgram(focusedChannel, program)
+                        }}
+                        onMouseEnter={() => {
+                          setProgramCursor(index)
+                          setFocusCol('programs')
+                        }}
+                        className={`remote-hit mb-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] ${
+                          hovered ? 'bg-accent/75 text-white' : current ? 'text-sky-300' : 'text-white/75 hover:bg-white/8'
+                        }`}
+                      >
+                        <span className={`w-11 shrink-0 tabular-nums ${current && !hovered ? 'text-sky-300' : 'text-white/55'}`}>
+                          {new Date(program.start).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                        <MarqueeText text={program.title} active={hovered || current} />
+                        <ArchiveMark visible={past} />
+                      </button>
+                    </div>
                   )
                 })}
-                {!dayPrograms.length ? <div className="px-2 py-4 text-sm text-white/40">Нет программы на этот день</div> : null}
+                {!visiblePrograms.length ? <div className="px-2 py-4 text-sm text-white/40">Нет программы</div> : null}
               </div>
             </aside>
+            {daysOpen ? (
             <aside className="flex w-[84px] shrink-0 flex-col bg-black/30 backdrop-blur-[2px]">
               <div className="px-1 py-3 text-center text-[11px] uppercase tracking-wider text-white/35">Дни</div>
-              <div className="scroll-thin flex-1 overflow-y-auto px-1 pb-3">
+              <div ref={dayRef} className="scroll-thin flex-1 overflow-y-auto px-1 pb-3">
                 {days.map((day, index) => (
-                  <DayButton
-                    key={day}
-                    day={day}
-                    hovered={focusCol === 'days' && index === dayCursor}
-                    selected={index === dayCursor}
-                    onClick={() => {
-                      setDayCursor(index)
-                      setFocusCol('days')
-                    }}
-                    onEnter={() => {
-                      setDayCursor(index)
-                      setFocusCol('days')
-                    }}
-                  />
+                  <div key={day} data-day={index}>
+                    <DayButton
+                      day={day}
+                      hovered={focusCol === 'days' && index === dayCursor}
+                      selected={index === dayCursor}
+                      onClick={() => {
+                        setDaysOpen(true)
+                        setDayCursor(index)
+                        setFocusCol('days')
+                      }}
+                      onEnter={() => {
+                        setDayCursor(index)
+                        setFocusCol('days')
+                      }}
+                    />
+                  </div>
                 ))}
               </div>
             </aside>
+            ) : null}
           </>
         ) : null}
 

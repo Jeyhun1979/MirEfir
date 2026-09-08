@@ -48,8 +48,9 @@ button:focus-visible,
   box-shadow: 0 0 0 2px #2f7cf6, 0 0 18px rgba(47, 124, 246, 0.35);
 }
 
-.remote-hit {
-  min-height: 48px;
+.setting-focus {
+  box-shadow: 0 0 0 2px #2f7cf6, 0 0 18px rgba(47, 124, 246, 0.35) !important;
+  outline: none;
 }
 
 button,
