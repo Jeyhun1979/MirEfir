@@ -63,6 +63,7 @@ export function VideoPlayer({ fullscreen = false }) {
       playback?.mode === 'archive'
         ? Math.max(60, Math.round(((playback.originEnd || playback.end) - (playback.originStart || playback.start)) / 1000))
         : 0,
+    archiveStartMs: playback?.mode === 'archive' ? playback.start : 0,
     onUnavailable: () => failArchive(),
   })
   const recorder = useRecorder(videoRef, selectedChannel, settings, updateSettings)

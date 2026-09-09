@@ -82,6 +82,12 @@ function parseXtream(url) {
   if (short && !/^(timeshift|hls|play|live|streaming|xmltv|player_api|panel_api)$/i.test(short[2])) {
     return { host: short[1], user: short[2], pass: short[3], id: short[4] }
   }
+  const indexed = text.match(
+    /^(https?:\/\/[^/]+)\/([^/]+)\/([^/]+)\/(\d+)\/(?:index|video)\.(m3u8|ts)$/i,
+  )
+  if (indexed && !/^(timeshift|hls|play|live|streaming|xmltv|player_api|panel_api)$/i.test(indexed[2])) {
+    return { host: indexed[1], user: indexed[2], pass: indexed[3], id: indexed[4] }
+  }
   return null
 }
 
@@ -201,8 +207,14 @@ export function catchupUrlCandidates(channel, startMs, endMs) {
 
   const xtream = type.includes('xc') || type.includes('default') || type.includes('shift') || type === '' || type.includes('timeshift')
   const flussonic = type.includes('flussonic') || type.includes('fs') || /index\.m3u8|video\.m3u8/i.test(channel.url)
-  const append = type.includes('append') || type.includes('shift') || type.includes('default')
+  const append = type.includes('append') || type.includes('shift') || type.includes('default') || flussonic || !type
 
+  if (flussonic || append || source) add(appendUtc(channel.url, start, finish))
+  if (flussonic) {
+    add(flussonicTimeshift(channel.url, start, finish))
+    add(flussonicAbs(channel.url, start))
+    add(flussonicRel(channel.url, start))
+  }
   if (xtream || !source) {
     add(xtreamTimeshift(channel.url, start, finish, 'm3u8', false))
     add(xtreamTimeshift(channel.url, start, finish, 'm3u8', true))
@@ -212,12 +224,6 @@ export function catchupUrlCandidates(channel, startMs, endMs) {
     add(xtreamTimeshiftUnix(channel.url, start, finish, 'm3u8'))
     add(xtreamTimeshiftUnix(channel.url, start, finish, 'ts'))
   }
-  if (flussonic) {
-    add(flussonicTimeshift(channel.url, start, finish))
-    add(flussonicAbs(channel.url, start))
-    add(flussonicRel(channel.url, start))
-  }
-  if (append || source) add(appendUtc(channel.url, start, finish))
 
   return urls.filter((item) => item && item !== channel.url)
 }

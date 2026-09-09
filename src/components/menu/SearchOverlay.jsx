@@ -23,6 +23,7 @@ export function SearchOverlay() {
   const listRef = useRef(null)
   const skipCursorReset = useRef(false)
   const [cursor, setCursor] = useState(-1)
+  const [rowFocus, setRowFocus] = useState('input')
   const [voicePickId, setVoicePickId] = useState('')
   const [voiceNote, setVoiceNote] = useState('')
   const results = visibleChannels.slice(0, 40)
@@ -68,13 +69,15 @@ export function SearchOverlay() {
   useEffect(() => {
     if (uiScreen === 'search') {
       setCursor(-1)
+      setRowFocus(voiceArmed ? 'mic' : 'input')
       setVoicePickId('')
       setVoiceNote('')
-      inputRef.current?.focus()
+      if (voiceArmed) inputRef.current?.blur()
+      else inputRef.current?.focus()
       return
     }
     stopSpeech()
-  }, [stopSpeech, uiScreen])
+  }, [stopSpeech, uiScreen, voiceArmed])
 
   useEffect(() => {
     if (skipCursorReset.current) {
@@ -135,6 +138,14 @@ export function SearchOverlay() {
       goBack()
       return
     }
+    if ((dir === 'right' || dir === 'left') && cursor < 0) {
+      event.preventDefault()
+      event.stopPropagation()
+      setRowFocus(dir === 'right' ? 'mic' : 'input')
+      if (dir === 'right') inputRef.current?.blur()
+      else inputRef.current?.focus()
+      return
+    }
     if (dir === 'down') {
       event.preventDefault()
       event.stopPropagation()
@@ -148,10 +159,18 @@ export function SearchOverlay() {
       event.stopPropagation()
       if (cursor <= 0) {
         setCursor(-1)
-        inputRef.current?.focus()
+        if (rowFocus === 'mic') inputRef.current?.blur()
+        else inputRef.current?.focus()
         return
       }
       setCursor((current) => current - 1)
+      return
+    }
+    if (isOkKey(event) && cursor < 0 && rowFocus === 'mic') {
+      event.preventDefault()
+      event.stopPropagation()
+      if (speech.listening) speech.stop()
+      else speech.start()
       return
     }
     if (isOkKey(event) && cursor >= 0) {
@@ -180,16 +199,20 @@ export function SearchOverlay() {
             onKeyDown={onKeyDown}
             placeholder="Название — найти. «Переключи на …» — включить"
             className={`min-w-0 flex-1 rounded-xl border bg-black/40 px-3 py-2.5 text-sm outline-none ${
-              cursor < 0 ? 'border-accent' : 'border-white/10'
+              cursor < 0 && rowFocus === 'input' ? 'border-accent' : 'border-white/10'
             }`}
           />
           <button
             type="button"
             title={speech.supported ? 'Голосовой поиск' : 'Голос недоступен'}
             disabled={!speech.supported}
-            onClick={() => (speech.listening ? speech.stop() : speech.start())}
+            onClick={() => {
+              setRowFocus('mic')
+              if (speech.listening) speech.stop()
+              else speech.start()
+            }}
             className={`remote-hit flex h-12 w-12 items-center justify-center rounded-xl ${
-              speech.listening ? 'bg-live' : 'bg-white/10 hover:bg-white/15'
+              speech.listening ? 'bg-live' : cursor < 0 && rowFocus === 'mic' ? 'bg-accent' : 'bg-white/10 hover:bg-white/15'
             } disabled:opacity-30`}
           >
             <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor" aria-hidden="true">

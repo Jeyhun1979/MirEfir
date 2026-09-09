@@ -5,6 +5,14 @@ function isHlsUrl(url) {
   return /\.m3u8(\?|$)/i.test(url) || url.toLowerCase().includes('m3u8')
 }
 
+function segmentTimeMs(url) {
+  const match = String(url || '').match(/(\d{10,13})(?:\.ts|\.m4s)/i)
+  if (!match) return 0
+  const value = Number(match[1])
+  if (!Number.isFinite(value) || value < 1e9) return 0
+  return value > 1e12 ? value : value * 1000
+}
+
 function createEngine(compact = false, bufferSec = 15, vod = false) {
   const live = Math.min(45, Math.max(8, Number(bufferSec) || 15))
   return new Hls({
@@ -60,6 +68,7 @@ export function useHls(videoRef, src, options = {}) {
   const requireVod = Boolean(options.requireVod)
   const liveUrl = options.liveUrl || ''
   const expectedSec = Number(options.expectedDurationSec) || 0
+  const archiveStartMs = Number(options.archiveStartMs) || 0
   const fallbackKey = (options.fallbacks || []).join('\n')
   const onUnavailableRef = useRef(options.onUnavailable)
   onUnavailableRef.current = options.onUnavailable
@@ -138,6 +147,12 @@ export function useHls(videoRef, src, options = {}) {
       hls.attachMedia(video)
 
       const looksLikeLiveEdge = (details) => {
+        const firstUrl = details?.fragments?.[0]?.relurl || details?.fragments?.[0]?.url || ''
+        const segMs = segmentTimeMs(firstUrl)
+        if (archiveStartMs && segMs) {
+          if (Math.abs(segMs - archiveStartMs) <= 180000) return false
+          if (Math.abs(segMs - Date.now()) <= 45000 && Date.now() - archiveStartMs > 120000) return true
+        }
         const live = Boolean(details?.live) || video.duration === Infinity
         const ranges = video.seekable
         const span = ranges.length
@@ -244,7 +259,7 @@ export function useHls(videoRef, src, options = {}) {
     return () => {
       video.removeEventListener('error', onError)
     }
-  }, [bufferSec, compact, current, expectedSec, requireVod, videoRef])
+  }, [archiveStartMs, bufferSec, compact, current, expectedSec, requireVod, videoRef])
 
   return { error, loading }
 }

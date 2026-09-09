@@ -3,7 +3,7 @@ const path = require('path')
 const fs = require('fs')
 const { pathToFileURL } = require('url')
 const { registerUpdateIpc, isApplyingUpdate } = require('./updater.cjs')
-const { listenWindowsSpeech, cancelWindowsSpeech } = require('./speech.cjs')
+const { listenWindowsSpeech, cancelWindowsSpeech, transcribePcm } = require('./speech.cjs')
 
 const DEV_URL = 'http://127.0.0.1:5173'
 const CONFIG_NAME = 'mirefir-config.json'
@@ -104,6 +104,9 @@ function createWindow() {
 app.whenReady().then(() => {
   if (!gotLock) return
   migrateLegacyProfile()
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback(permission !== 'openExternal')
+  })
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
     const headers = { ...details.requestHeaders }
     if (!headers['User-Agent'] && !headers['user-agent']) {
@@ -225,6 +228,7 @@ ipcMain.handle('app:info', () => ({
 }))
 
 ipcMain.handle('speech:listen', async (_event, payload) => listenWindowsSpeech(payload || {}))
+ipcMain.handle('speech:transcribe', async (_event, payload) => transcribePcm(payload || {}))
 ipcMain.handle('speech:cancel', () => {
   cancelWindowsSpeech()
   return true

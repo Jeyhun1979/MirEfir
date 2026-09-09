@@ -77,6 +77,10 @@ function listenWindowsSpeech(payload = {}) {
         resolve({ ok: false, error: 'NO_LANG' })
         return
       }
+      if (lines.includes('ERROR:NO_RU')) {
+        resolve({ ok: false, error: 'NO_RU' })
+        return
+      }
       const okLine = [...lines].reverse().find((line) => line.startsWith('OK:')) || ''
       if (!okLine) {
         resolve({ ok: true, text: '', intent: '', grammar: '', confidence: 0 })
@@ -89,6 +93,40 @@ function listenWindowsSpeech(payload = {}) {
       }
     })
   })
+}
+
+async function transcribePcm(payload = {}) {
+  const raw = payload.pcm
+  if (!raw) return { ok: false, error: 'NO_AUDIO' }
+  const body = Buffer.isBuffer(raw) ? raw : Buffer.from(raw)
+  if (body.length < 3200) return { ok: true, text: '', intent: '', grammar: '', confidence: 0 }
+  const lang = String(payload.lang || 'ru-RU')
+  try {
+    const url = `https://www.google.com/speech-api/v2/recognize?client=chromium&lang=${encodeURIComponent(lang)}&key=AIzaSyBOti4mM-6x9WDnZIjIeyEUHhQTh-ILmRI&output=json&maxresults=3&pfilter=0`
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'audio/l16; rate=16000',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+      },
+      body,
+    })
+    const text = await response.text()
+    let best = ''
+    for (const line of String(text || '').split(/\r?\n/)) {
+      if (!line.trim()) continue
+      try {
+        const data = JSON.parse(line)
+        const alt = data.result?.[0]?.alternative?.[0]
+        if (alt?.transcript) best = String(alt.transcript).trim()
+      } catch {
+        /* ignore non-json */
+      }
+    }
+    return { ok: true, text: best, intent: '', grammar: 'dictation', confidence: 0 }
+  } catch {
+    return { ok: false, error: 'network' }
+  }
 }
 
 const SPEECH_PS1 = [
@@ -104,7 +142,7 @@ const SPEECH_PS1 = [
   '$info = $null',
   '$installed = [System.Speech.Recognition.SpeechRecognitionEngine]::InstalledRecognizers()',
   'foreach ($item in $installed) { if ($item.Culture.Name -like "ru*") { $info = $item; break } }',
-  'if ($null -eq $info -and $installed.Count -gt 0) { $info = $installed[0] }',
+  'if ($null -eq $info) { Write-Output "ERROR:NO_RU"; exit 0 }',
   '$eng = $null',
   'if ($null -ne $info) { try { $eng = New-Object System.Speech.Recognition.SpeechRecognitionEngine($info) } catch {} }',
   'if ($null -eq $eng) { try { $eng = New-Object System.Speech.Recognition.SpeechRecognitionEngine } catch {} }',
@@ -176,4 +214,4 @@ const SPEECH_PS1 = [
   'Write-Output ("OK:" + [Convert]::ToBase64String($bytes))',
 ].join('\r\n')
 
-module.exports = { listenWindowsSpeech, cancelWindowsSpeech }
+module.exports = { listenWindowsSpeech, cancelWindowsSpeech, transcribePcm }
