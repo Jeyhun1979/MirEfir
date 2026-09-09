@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { appendChunk, getInternalFolder, listStoredRecordings, pickStorageFolder, safeFileName } from '../lib/storage.js'
+import { appendChunk, getInternalFolder, listStoredRecordings, pickStorageFolder, recordingMime, safeFileName } from '../lib/storage.js'
 
 const META_KEY = 'mirefir.recordings'
 
@@ -91,13 +91,18 @@ export function useRecorder(videoRef, channel, settings, updateSettings) {
       if (!stream.getVideoTracks().length) {
         throw new Error('Этот поток нельзя записать, пока нет картинки. Дождитесь эфира и повторите.')
       }
-      const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
-        ? 'video/webm;codecs=vp9,opus'
-        : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
-          ? 'video/webm;codecs=vp8,opus'
-          : 'video/webm'
-      const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 3_500_000 })
-      const fileName = safeFileName(channel.displayName || channel.name)
+      const picked = recordingMime()
+      let rec
+      try {
+        rec = picked.mime
+          ? new MediaRecorder(stream, { mimeType: picked.mime, videoBitsPerSecond: 3_500_000 })
+          : new MediaRecorder(stream, { videoBitsPerSecond: 3_500_000 })
+      } catch {
+        rec = new MediaRecorder(stream, { videoBitsPerSecond: 3_500_000 })
+        picked.ext = rec.mimeType?.includes('mp4') ? 'mp4' : 'webm'
+      }
+      const ext = rec.mimeType?.includes('mp4') ? 'mp4' : picked.ext
+      const fileName = safeFileName(channel.displayName || channel.name, ext)
       fileRef.current =
         folder.includes('/') || folder.includes('\\') ? `${folder.replace(/[\\/]$/, '')}\\${fileName}` : fileName
 

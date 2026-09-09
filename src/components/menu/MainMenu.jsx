@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { arrowDir, isOkKey } from '../../lib/remoteKeys.js'
+import { arrowDir, isBackKey, isOkKey } from '../../lib/remoteKeys.js'
 import { quitApp } from '../../lib/quitApp.js'
 import { usePlayer } from '../../store/PlayerContext.jsx'
 
@@ -54,7 +54,7 @@ export function MainMenu() {
         setExitPrompt(true)
         return
       }
-      if (dir === 'right') {
+      if (dir === 'right' || isBackKey(event)) {
         event.preventDefault()
         event.stopPropagation()
         goBack()

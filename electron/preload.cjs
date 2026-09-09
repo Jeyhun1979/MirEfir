@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('mirefir', {
   checkUpdate: () => ipcRenderer.invoke('update:check'),
   downloadUpdate: () => ipcRenderer.invoke('update:download'),
   applyUpdate: () => ipcRenderer.invoke('update:apply'),
+  listenSpeech: (payload) => ipcRenderer.invoke('speech:listen', payload || {}),
+  cancelSpeech: () => ipcRenderer.invoke('speech:cancel'),
   onUpdateProgress: (handler) => {
     const listen = (_event, data) => handler(data)
     ipcRenderer.on('update:progress', listen)

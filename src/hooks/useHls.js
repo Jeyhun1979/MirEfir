@@ -5,17 +5,18 @@ function isHlsUrl(url) {
   return /\.m3u8(\?|$)/i.test(url) || url.toLowerCase().includes('m3u8')
 }
 
-function createEngine(compact = false) {
+function createEngine(compact = false, bufferSec = 15, vod = false) {
+  const live = Math.min(45, Math.max(8, Number(bufferSec) || 15))
   return new Hls({
     enableWorker: true,
-    lowLatencyMode: true,
+    lowLatencyMode: !vod,
     liveDurationInfinity: false,
-    backBufferLength: compact ? 8 : 240,
-    maxBufferLength: compact ? 6 : 30,
-    maxMaxBufferLength: compact ? 12 : 60,
+    backBufferLength: compact ? 8 : vod ? Math.min(90, live * 2) : live,
+    maxBufferLength: compact ? 6 : vod ? Math.min(40, live + 20) : Math.min(20, live),
+    maxMaxBufferLength: compact ? 12 : vod ? Math.min(60, live + 30) : Math.min(30, live + 10),
     capLevelToPlayerSize: compact,
     startLevel: compact ? 0 : -1,
-    liveSyncDurationCount: 3,
+    liveSyncDurationCount: vod ? 1 : 3,
     startFragPrefetch: true,
     testBandwidth: false,
     manifestLoadingMaxRetry: 1,
@@ -55,7 +56,13 @@ export function useHls(videoRef, src, options = {}) {
   const [loading, setLoading] = useState(Boolean(src))
   const [error, setError] = useState('')
   const compact = Boolean(options.compact)
+  const bufferSec = Number(options.bufferSec) || 15
+  const requireVod = Boolean(options.requireVod)
+  const liveUrl = options.liveUrl || ''
+  const expectedSec = Number(options.expectedDurationSec) || 0
   const fallbackKey = (options.fallbacks || []).join('\n')
+  const onUnavailableRef = useRef(options.onUnavailable)
+  onUnavailableRef.current = options.onUnavailable
 
   if (src !== activeSrc) {
     setActiveSrc(src)
@@ -89,9 +96,11 @@ export function useHls(videoRef, src, options = {}) {
   }, [videoRef])
 
   useEffect(() => {
-    queueRef.current = uniqueUrls(src, fallbackKey ? fallbackKey.split('\n') : [])
+    queueRef.current = uniqueUrls(src, fallbackKey ? fallbackKey.split('\n') : []).filter(
+      (item) => !requireVod || !liveUrl || item !== liveUrl,
+    )
     setCurrent(queueRef.current[0] || '')
-  }, [fallbackKey, src])
+  }, [fallbackKey, liveUrl, requireVod, src])
 
   useEffect(() => {
     const video = videoRef.current
@@ -124,14 +133,51 @@ export function useHls(videoRef, src, options = {}) {
     }
 
     if (isHlsUrl(current) && Hls.isSupported()) {
-      const hls = createEngine(compact)
+      const hls = createEngine(compact, bufferSec, requireVod)
       hlsRef.current = hls
       hls.attachMedia(video)
+
+      const looksLikeLiveEdge = (details) => {
+        const live = Boolean(details?.live) || video.duration === Infinity
+        const ranges = video.seekable
+        const span = ranges.length
+          ? Math.max(0, ranges.end(ranges.length - 1) - ranges.start(0))
+          : Number.isFinite(video.duration)
+            ? video.duration
+            : 0
+        const toEdge = ranges.length ? ranges.end(ranges.length - 1) - video.currentTime : 0
+        if (expectedSec >= 90 && span > 0 && span < Math.min(90, expectedSec * 0.3)) return true
+        if (live && expectedSec >= 90 && span < 90) return true
+        if (live && toEdge < 22 && span < 180) return true
+        return false
+      }
+
+      const rejectLive = () => {
+        if (tryNext()) {
+          hls.stopLoad()
+          return
+        }
+        setLoading(false)
+        setError('Сервер отдал прямой эфир вместо архива.')
+        onUnavailableRef.current?.()
+      }
 
       let netFails = 0
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         netFails = 0
         play()
+      })
+
+      const checkLive = (details) => {
+        if (!requireVod || id !== requestId.current || !hlsRef.current) return
+        if (looksLikeLiveEdge(details)) rejectLive()
+      }
+
+      const liveChecks = []
+      hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
+        if (!requireVod || id !== requestId.current) return
+        liveChecks.push(window.setTimeout(() => checkLive(data.details), 800))
+        liveChecks.push(window.setTimeout(() => checkLive(data.details), 2500))
       })
 
       hls.on(Hls.Events.ERROR, (_event, data) => {
@@ -178,7 +224,10 @@ export function useHls(videoRef, src, options = {}) {
           setError((prev) => prev || 'Поток не запустился. Архив или сдвиг могли быть недоступны.')
         }
       }, 12000)
-      return () => window.clearTimeout(watchdog)
+      return () => {
+        window.clearTimeout(watchdog)
+        liveChecks.forEach((timer) => window.clearTimeout(timer))
+      }
     }
 
     const onError = () => {
@@ -195,7 +244,7 @@ export function useHls(videoRef, src, options = {}) {
     return () => {
       video.removeEventListener('error', onError)
     }
-  }, [compact, current, videoRef])
+  }, [bufferSec, compact, current, expectedSec, requireVod, videoRef])
 
   return { error, loading }
 }

@@ -3,6 +3,7 @@ const path = require('path')
 const fs = require('fs')
 const { pathToFileURL } = require('url')
 const { registerUpdateIpc, isApplyingUpdate } = require('./updater.cjs')
+const { listenWindowsSpeech, cancelWindowsSpeech } = require('./speech.cjs')
 
 const DEV_URL = 'http://127.0.0.1:5173'
 const CONFIG_NAME = 'mirefir-config.json'
@@ -85,6 +86,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: false,
+      backgroundThrottling: false,
     },
   })
 
@@ -221,6 +223,12 @@ ipcMain.handle('app:info', () => ({
   packaged: app.isPackaged,
   portable: Boolean(process.env.PORTABLE_EXECUTABLE_DIR),
 }))
+
+ipcMain.handle('speech:listen', async (_event, payload) => listenWindowsSpeech(payload || {}))
+ipcMain.handle('speech:cancel', () => {
+  cancelWindowsSpeech()
+  return true
+})
 
 ipcMain.handle('playlist:open-file', async () => {
   const result = await dialog.showOpenDialog({

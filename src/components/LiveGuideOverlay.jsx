@@ -8,6 +8,7 @@ import {
   getProgramProgress,
   startOfDay,
 } from '../lib/epg.js'
+import { programHasArchive } from '../lib/catchup.js'
 import { arrowDir, isBackKey, isConfirmKey, isMenuKey } from '../lib/remoteKeys.js'
 import { useClock } from '../hooks/useClock.js'
 import { usePlayer } from '../store/PlayerContext.jsx'
@@ -117,6 +118,7 @@ export function LiveGuideOverlay() {
     selectChannel,
     selectGroup,
     playProgram,
+    channelAllowsArchive,
     getCurrentProgram,
     getPrograms,
     settings,
@@ -130,6 +132,7 @@ export function LiveGuideOverlay() {
     commitFavoriteMove,
     moveFavorite,
     goBack,
+    error,
   } = usePlayer()
 
   const [groupId, setGroupId] = useState(selectedGroupId || 'all')
@@ -310,6 +313,12 @@ export function LiveGuideOverlay() {
       selectChannel(channel.id)
     }
 
+    const playFocused = () => {
+      if (!focusedChannel || !focusedProgram) return
+      const ok = playProgram(focusedChannel, focusedProgram)
+      if (ok) setLiveGuideOpen(false)
+    }
+
     const openFav = (channel) => {
       if (!channel) return
       okHeld.current = true
@@ -346,11 +355,11 @@ export function LiveGuideOverlay() {
         return
       }
       if (liveGuideView === 'schedule' && (focusCol === 'programs' || focusCol === 'days')) {
-        playProgram(focusedChannel, focusedProgram)
+        playFocused()
         return
       }
       if (focusCol === 'programs' || focusCol === 'days') {
-        playProgram(focusedChannel, focusedProgram)
+        playFocused()
         return
       }
       if (liveGuideView === 'categories' || liveGuideView === 'groups') {
@@ -537,6 +546,7 @@ export function LiveGuideOverlay() {
     openChannelMenu,
     openMenu,
     playProgram,
+    setLiveGuideOpen,
     selectChannel,
     selectGroup,
     setChannelMenu,
@@ -606,7 +616,7 @@ export function LiveGuideOverlay() {
                   </div>
                 ) : null}
               </div>
-              <ArchiveMark visible={(channel.catchupDays || 0) > 0} />
+              <ArchiveMark visible={settings.archiveEnabled && channelAllowsArchive(channel)} />
             </button>
           )
         })}
@@ -673,6 +683,11 @@ export function LiveGuideOverlay() {
                   const hovered = focusCol === 'programs' && index === programCursor
                   const current = program.start <= now.getTime() && now.getTime() < program.end
                   const past = program.end <= now.getTime()
+                  const archive =
+                    past &&
+                    settings.archiveEnabled &&
+                    channelAllowsArchive(focusedChannel) &&
+                    programHasArchive(focusedChannel, program, now.getTime(), settings.archiveDays)
                   return (
                     <div key={program.id || program.start}>
                       {day !== prevDay ? (
@@ -684,7 +699,8 @@ export function LiveGuideOverlay() {
                         onClick={() => {
                           setProgramCursor(index)
                           setFocusCol('programs')
-                          playProgram(focusedChannel, program)
+                          const ok = playProgram(focusedChannel, program)
+                          if (ok) setLiveGuideOpen(false)
                         }}
                         onMouseEnter={() => {
                           setProgramCursor(index)
@@ -698,7 +714,7 @@ export function LiveGuideOverlay() {
                           {new Date(program.start).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
                         </span>
                         <MarqueeText text={program.title} active={hovered || current} />
-                        <ArchiveMark visible={past} />
+                        <ArchiveMark visible={archive} />
                       </button>
                     </div>
                   )
@@ -761,6 +777,11 @@ export function LiveGuideOverlay() {
                 {item.title}
               </button>
             ))}
+          </div>
+        ) : null}
+        {error ? (
+          <div className="pointer-events-none absolute bottom-8 left-1/2 z-20 -translate-x-1/2 rounded-xl bg-black/75 px-4 py-2 text-sm text-red-200">
+            {error}
           </div>
         ) : null}
       </div>

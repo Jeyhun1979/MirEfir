@@ -3,7 +3,7 @@ import { getCurrentProgram, getNextProgram } from '../lib/epg.js'
 import { collectGroups, loadPlaylistFromFile, loadPlaylistFromUrl, parseM3U } from '../lib/m3uParser.js'
 import { bindEpgToChannels, loadXmltv, mergeXmltv } from '../lib/xmltv.js'
 import { decodeCloudCode, encodeCloudCode } from '../lib/cloudCode.js'
-import { buildCatchupUrl, catchupUrlCandidates, canPlayArchive } from '../lib/catchup.js'
+import { buildCatchupUrl, catchupUrlCandidates, canPlayArchive, channelHasCatchup } from '../lib/catchup.js'
 import {
   applyBackup,
   buildBackup,
@@ -183,9 +183,14 @@ export function PlayerProvider({ children }) {
   const [exitPrompt, setExitPrompt] = useState(false)
   const [menuResumeGuide, setMenuResumeGuide] = useState(false)
   const [streamOverride, setStreamOverride] = useState(null)
+  const catchupDeniedRef = useRef(new Set())
+  const [catchupDeniedTick, setCatchupDeniedTick] = useState(0)
   const [channelMenu, setChannelMenu] = useState(null)
   const [movingFavoriteId, setMovingFavoriteId] = useState(null)
   const favoriteMoveSnapshot = useRef(null)
+  const bootstrapped = useRef(false)
+  const selectedIdRef = useRef('')
+  const previousIdRef = useRef('')
 
   const playlistGroups = useMemo(() => {
     const hidden = settings.hiddenGroups || []
@@ -207,7 +212,7 @@ export function PlayerProvider({ children }) {
     let list = channels.filter((channel) => !hidden.includes(channel.group))
 
     if (listMode === 'archive') {
-      list = settings.archiveEnabled ? list.filter((channel) => (channel.catchupDays || 0) > 0) : []
+      list = settings.archiveEnabled ? list.filter((channel) => channelHasCatchup(channel)) : []
     } else if (listMode === 'movies') {
       list = list.filter((channel) => /кино|фильм|movie|cinema/i.test(channel.group))
     } else if (listMode === 'series') {
@@ -336,7 +341,7 @@ export function PlayerProvider({ children }) {
   const rememberChannel = useCallback(
     (channel) => {
       if (!channel?.id) return
-      const programs = epg[channel.id] || epg[channel.epgId] || epg[channel.tvgId] || []
+      const programs = epg[channel.id] || []
       const offset = (settings.epgOffsetHours || 0) * 60 * 60 * 1000
       const shifted = offset
         ? programs.map((item) => ({ ...item, start: item.start + offset, end: item.end + offset }))
@@ -447,6 +452,7 @@ export function PlayerProvider({ children }) {
     (channelId) => {
       setStreamOverride(null)
       setSelectedChannelId(channelId)
+      setError('')
       rememberChannel(channels.find((item) => item.id === channelId))
     },
     [channels, rememberChannel],
@@ -468,7 +474,11 @@ export function PlayerProvider({ children }) {
         setError('Эта передача ещё не началась')
         return false
       }
-      if (!canPlayArchive(channel, program, now, settings.archiveEnabled ? settings.archiveDays : 0)) {
+      if (!settings.archiveEnabled) {
+        setError('Архив выключен в настройках')
+        return false
+      }
+      if (catchupDeniedRef.current.has(channel.id) || !canPlayArchive(channel, program, now, settings.archiveDays)) {
         setError('Архив для этого канала недоступен')
         return false
       }
@@ -480,6 +490,7 @@ export function PlayerProvider({ children }) {
       }
       const originStart = options.originStart || program.start
       const originEnd = options.originEnd || program.end
+      const playEnd = Math.min(program.end, now - 1000)
       setSelectedChannelId(channel.id)
       rememberChannel(channel)
       setStreamOverride({
@@ -487,7 +498,7 @@ export function PlayerProvider({ children }) {
         urls,
         mode: 'archive',
         start: program.start,
-        end: program.end,
+        end: playEnd > program.start ? playEnd : program.end,
         originStart,
         originEnd,
         title: program.title,
@@ -497,6 +508,16 @@ export function PlayerProvider({ children }) {
       return true
     },
     [rememberChannel, selectChannel, settings.archiveDays, settings.archiveEnabled],
+  )
+
+  const failArchive = useCallback(() => {
+    setStreamOverride(null)
+    setError('Не удалось перемотать: сервер отдал прямой эфир вместо записи.')
+  }, [])
+
+  const channelAllowsArchive = useCallback(
+    (channel) => channelHasCatchup(channel) && !catchupDeniedRef.current.has(channel?.id),
+    [catchupDeniedTick],
   )
 
   const seekToMs = useCallback(
@@ -558,6 +579,20 @@ export function PlayerProvider({ children }) {
     },
     [selectChannel, selectedChannel, visibleChannels],
   )
+
+  useEffect(() => {
+    const id = selectedChannelId || ''
+    if (!id || id === selectedIdRef.current) return
+    if (selectedIdRef.current) previousIdRef.current = selectedIdRef.current
+    selectedIdRef.current = id
+  }, [selectedChannelId])
+
+  const swapPreviousChannel = useCallback(() => {
+    const prev = previousIdRef.current
+    if (!prev || prev === selectedChannelId) return
+    if (!channels.some((channel) => channel.id === prev)) return
+    selectChannel(prev)
+  }, [channels, selectChannel, selectedChannelId])
 
   const moveGroup = useCallback(
     (direction) => {
@@ -890,8 +925,6 @@ export function PlayerProvider({ children }) {
     queuePersistFile()
   }, [channels, listMode, selectedChannelId, selectedGroupId])
 
-  const bootstrapped = useRef(false)
-
   useEffect(() => {
     if (bootstrapped.current) return
     bootstrapped.current = true
@@ -928,33 +961,40 @@ export function PlayerProvider({ children }) {
         setStatus('Загрузка плейлиста…')
       }
 
-      try {
-        if (url) {
-          const parsed = await loadPlaylistFromUrl(url)
-          if (parsed.rawText) {
-            localStorage.setItem(PLAYLIST_TEXT_KEY, parsed.rawText)
-            queuePersistFile()
+      const refreshInBackground = async () => {
+        try {
+          if (url) {
+            const parsed = await loadPlaylistFromUrl(url)
+            if (cancelled) return
+            if (parsed.rawText) {
+              localStorage.setItem(PLAYLIST_TEXT_KEY, parsed.rawText)
+              queuePersistFile()
+            }
+            persistPlaylistUrl(url)
+            await applyPlaylist(parsed, { silent: Boolean(savedText) })
+          } else if (!savedText) {
+            throw new Error('no playlist')
           }
-          persistPlaylistUrl(url)
-          await applyPlaylist(parsed, { silent: Boolean(savedText) })
-        } else if (!savedText) {
-          throw new Error('no playlist')
+          const saved = loadSettings()
+          const guides = enabledEpgUrls(saved)
+          const guide = guides[0] || readEpgUrl() || saved.epgUrl
+          if (!guide && !guides.length) return
+          await new Promise((resolve) => window.setTimeout(resolve, 1800))
+          if (cancelled) return
+          importEpg(guides.length ? guides : guide).catch((err) => {
+            setError(err.message || 'Не удалось загрузить телепрограмму. Её можно добавить позже.')
+          })
+        } catch {
+          if (savedText) {
+            setStatus('Плейлист из памяти. Обновление по ссылке не удалось')
+            return
+          }
+          setStatus('Плейлист сохранён, повторная загрузка не удалась')
+          setError('Не удалось открыть плейлист. Ссылка или файл уже сохранены — повторите позже, вводить заново не нужно.')
         }
-        const saved = loadSettings()
-        const guides = enabledEpgUrls(saved)
-        const guide = guides[0] || readEpgUrl() || saved.epgUrl
-        if (!guide && !guides.length) return
-        importEpg(guides.length ? guides : guide).catch((err) => {
-          setError(err.message || 'Не удалось загрузить телепрограмму. Её можно добавить позже.')
-        })
-      } catch {
-        if (savedText) {
-          setStatus('Плейлист из памяти. Обновление по ссылке не удалось')
-          return
-        }
-        setStatus('Плейлист сохранён, повторная загрузка не удалась')
-        setError('Не удалось открыть плейлист. Ссылка или файл уже сохранены — повторите позже, вводить заново не нужно.')
       }
+
+      refreshInBackground()
     }
 
     start()
@@ -980,6 +1020,8 @@ export function PlayerProvider({ children }) {
     streamUrl: streamOverride?.url || selectedChannel?.url || '',
     playback: streamOverride,
     playProgram,
+    failArchive,
+    channelAllowsArchive,
     seekArchive,
     seekToMs,
     focusZone,
@@ -1018,6 +1060,7 @@ export function PlayerProvider({ children }) {
     setStatus,
     selectGroup,
     selectChannel,
+    swapPreviousChannel,
     moveChannel,
     moveGroup,
     toggleFavorite,
@@ -1054,11 +1097,11 @@ export function PlayerProvider({ children }) {
     importFromFile,
     importEpg,
     upsertEpgSource,
-    getPrograms: (channel) => shiftPrograms(epg[channel?.id] || epg[channel?.epgId] || epg[channel?.tvgId] || []),
+    getPrograms: (channel) => shiftPrograms(epg[channel?.id] || []),
     getCurrentProgram: (channel) =>
-      getCurrentProgram(shiftPrograms(epg[channel?.id] || epg[channel?.epgId] || epg[channel?.tvgId] || [])),
+      getCurrentProgram(shiftPrograms(epg[channel?.id] || [])),
     getNextProgram: (channel) =>
-      getNextProgram(shiftPrograms(epg[channel?.id] || epg[channel?.epgId] || epg[channel?.tvgId] || [])),
+      getNextProgram(shiftPrograms(epg[channel?.id] || [])),
   }
 
   return <PlayerContext.Provider value={value}>{children}</PlayerContext.Provider>

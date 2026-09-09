@@ -47,6 +47,14 @@ export function normalizeGroup(name) {
   return group.charAt(0).toUpperCase() + group.slice(1)
 }
 
+function parseCatchupDays(attrs) {
+  const rec = Number.parseInt(attrs['tvg-rec'] || attrs['catchup-days'] || '', 10)
+  if (Number.isFinite(rec) && rec > 0 && rec <= 40) return rec
+  const shift = Number.parseInt(attrs.timeshift || '', 10)
+  if (Number.isFinite(shift) && shift > 0 && shift <= 40) return shift
+  return 0
+}
+
 function parseExtInf(line) {
   const comma = line.lastIndexOf(',')
   const meta = comma >= 0 ? line.slice(0, comma) : line
@@ -67,7 +75,7 @@ function parseExtInf(line) {
     catchup: attrs.catchup || attrs['catchup-type'] || '',
     catchupType: attrs['catchup-type'] || attrs.catchup || '',
     catchupSource: attrs['catchup-source'] || '',
-    catchupDays: Number.parseInt(attrs['tvg-rec'] || attrs['catchup-days'] || attrs['timeshift'] || '0', 10) || 0,
+    catchupDays: parseCatchupDays(attrs),
     url: '',
     id: '',
   }
@@ -99,6 +107,7 @@ export function parseM3U(text, sourceName = 'Плейлист') {
   let pending = null
   let lastGroup = ''
   let playlistName = sourceName.replace(/\.(m3u8?|txt)$/i, '')
+  let playlistCatchup = { type: '', days: 0, source: '' }
 
   for (const raw of lines) {
     const line = raw.trim()
@@ -106,6 +115,11 @@ export function parseM3U(text, sourceName = 'Плейлист') {
 
     if (line.startsWith('#EXTM3U')) {
       const attrs = extractExtInfTags(line)
+      playlistCatchup = {
+        type: attrs.catchup || attrs['catchup-type'] || '',
+        days: parseCatchupDays(attrs),
+        source: attrs['catchup-source'] || '',
+      }
       for (const key of ['url-tvg', 'x-tvg-url', 'tvg-url']) {
         if (!attrs[key]) continue
         attrs[key]
@@ -140,6 +154,12 @@ export function parseM3U(text, sourceName = 'Плейлист') {
       pending.url = line
       pending.id = `${channels.length + 1}-${hash(line + pending.name)}`
       if (!pending.number) pending.number = channels.length + 1
+      if (!pending.catchup && playlistCatchup.type) {
+        pending.catchup = playlistCatchup.type
+        pending.catchupType = pending.catchupType || playlistCatchup.type
+      }
+      if (!pending.catchupSource && playlistCatchup.source) pending.catchupSource = playlistCatchup.source
+      if (!pending.catchupDays && pending.catchup && playlistCatchup.days) pending.catchupDays = playlistCatchup.days
       channels.push(pending)
       lastGroup = pending.group
       pending = null

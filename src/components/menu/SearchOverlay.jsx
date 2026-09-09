@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSpeechSearch } from '../../hooks/useSpeechSearch.js'
+import { parseVoiceCommand, pickChannelByVoice, voicePhrasesForChannels } from '../../lib/channelMatch.js'
 import { arrowDir, isBackKey, isOkKey } from '../../lib/remoteKeys.js'
 import { usePlayer } from '../../store/PlayerContext.jsx'
 
@@ -9,6 +10,8 @@ export function SearchOverlay() {
     searchQuery,
     setSearchQuery,
     closeOverlays,
+    goBack,
+    channels,
     visibleChannels,
     selectChannel,
     setListMode,
@@ -18,30 +21,75 @@ export function SearchOverlay() {
   } = usePlayer()
   const inputRef = useRef(null)
   const listRef = useRef(null)
+  const skipCursorReset = useRef(false)
   const [cursor, setCursor] = useState(-1)
+  const [voicePickId, setVoicePickId] = useState('')
+  const [voiceNote, setVoiceNote] = useState('')
   const results = visibleChannels.slice(0, 40)
+  const phrases = useMemo(() => voicePhrasesForChannels(channels), [channels])
+  const phrasesRef = useRef(phrases)
+  phrasesRef.current = phrases
 
   const onVoiceText = useCallback(
-    (text) => {
+    (text, meta) => {
+      if (!meta?.final) {
+        setListMode('live')
+        setSearchQuery(text)
+        return
+      }
+      const parsed = parseVoiceCommand(text, meta.grammar || meta.intent || '')
+      const query = parsed.query || text
+      const hit = pickChannelByVoice(channels, query)
       setListMode('live')
-      setSearchQuery(text)
-      setCursor(-1)
+      skipCursorReset.current = true
+      setVoiceNote('')
+      if (parsed.intent === 'switch') {
+        if (hit) {
+          selectChannel(hit.id)
+          closeOverlays()
+          return
+        }
+        setSearchQuery(query)
+        setVoicePickId('')
+        setCursor(-1)
+        setVoiceNote('Канал не найден. Скажите «переключи на» и название из списка.')
+        return
+      }
+      setSearchQuery(hit?.displayName || query)
+      setVoicePickId(hit?.id || '')
+      if (!hit) setCursor(-1)
     },
-    [setListMode, setSearchQuery],
+    [channels, closeOverlays, selectChannel, setListMode, setSearchQuery],
   )
 
-  const speech = useSpeechSearch(onVoiceText, settings.language === 'en' ? 'en-US' : 'ru-RU')
+  const speech = useSpeechSearch(onVoiceText, settings.language === 'en' ? 'en-US' : 'ru-RU', phrasesRef)
+  const stopSpeech = speech.stop
 
   useEffect(() => {
     if (uiScreen === 'search') {
       setCursor(-1)
+      setVoicePickId('')
+      setVoiceNote('')
       inputRef.current?.focus()
+      return
     }
-  }, [uiScreen])
+    stopSpeech()
+  }, [stopSpeech, uiScreen])
 
   useEffect(() => {
+    if (skipCursorReset.current) {
+      skipCursorReset.current = false
+      return
+    }
     setCursor(-1)
+    setVoicePickId('')
   }, [searchQuery])
+
+  useEffect(() => {
+    if (!voicePickId) return
+    const index = results.findIndex((channel) => channel.id === voicePickId)
+    if (index >= 0) setCursor(index)
+  }, [results, voicePickId])
 
   const startVoice = speech.start
   useEffect(() => {
@@ -57,6 +105,19 @@ export function SearchOverlay() {
     node?.scrollIntoView({ block: 'nearest' })
   }, [cursor])
 
+  useEffect(() => {
+    if (uiScreen !== 'search') return undefined
+    const onKey = (event) => {
+      if (!isBackKey(event)) return
+      event.preventDefault()
+      event.stopPropagation()
+      stopSpeech()
+      goBack()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [goBack, stopSpeech, uiScreen])
+
   if (uiScreen !== 'search') return null
 
   const pick = (channel) => {
@@ -67,7 +128,13 @@ export function SearchOverlay() {
 
   const onKeyDown = (event) => {
     const dir = arrowDir(event)
-    if (isBackKey(event)) return
+    if (isBackKey(event)) {
+      event.preventDefault()
+      event.stopPropagation()
+      speech.stop()
+      goBack()
+      return
+    }
     if (dir === 'down') {
       event.preventDefault()
       event.stopPropagation()
@@ -111,14 +178,14 @@ export function SearchOverlay() {
               setSearchQuery(event.target.value)
             }}
             onKeyDown={onKeyDown}
-            placeholder="Название канала или нажмите микрофон"
+            placeholder="Название — найти. «Переключи на …» — включить"
             className={`min-w-0 flex-1 rounded-xl border bg-black/40 px-3 py-2.5 text-sm outline-none ${
               cursor < 0 ? 'border-accent' : 'border-white/10'
             }`}
           />
           <button
             type="button"
-            title={speech.supported ? 'Голосовой поиск (V)' : 'Голос недоступен'}
+            title={speech.supported ? 'Голосовой поиск' : 'Голос недоступен'}
             disabled={!speech.supported}
             onClick={() => (speech.listening ? speech.stop() : speech.start())}
             className={`remote-hit flex h-12 w-12 items-center justify-center rounded-xl ${
@@ -130,8 +197,11 @@ export function SearchOverlay() {
             </svg>
           </button>
         </div>
-        {speech.listening ? <div className="mb-3 text-xs text-accent">Слушаю… говорите название канала</div> : null}
+        {speech.listening ? (
+          <div className="mb-3 text-xs text-accent">Слушаю… название найдёт, «переключи на» сразу включит</div>
+        ) : null}
         {speech.error ? <div className="mb-3 text-xs text-red-300">{speech.error}</div> : null}
+        {voiceNote ? <div className="mb-3 text-xs text-red-300">{voiceNote}</div> : null}
         <div ref={listRef} className="scroll-thin max-h-80 overflow-y-auto">
           {results.map((channel, index) => (
             <button

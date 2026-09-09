@@ -92,8 +92,28 @@ export async function readStoredFile(filePath) {
   return file.arrayBuffer()
 }
 
-export function safeFileName(channelName) {
+export function recordingMime() {
+  const types = [
+    ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'mp4'],
+    ['video/mp4;codecs=avc1.4D401E,mp4a.40.2', 'mp4'],
+    ['video/mp4', 'mp4'],
+    ['video/webm;codecs=vp9,opus', 'webm'],
+    ['video/webm;codecs=vp8,opus', 'webm'],
+    ['video/webm', 'webm'],
+  ]
+  for (const [mime, ext] of types) {
+    try {
+      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mime)) return { mime, ext }
+    } catch {
+      /* some Chromium builds throw on exotic mime strings */
+    }
+  }
+  return { mime: '', ext: 'webm' }
+}
+
+export function safeFileName(channelName, ext = 'webm') {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
   const clean = String(channelName || 'channel').replace(/[^\p{L}\p{N}]+/gu, '_').slice(0, 40)
-  return `${clean}-${stamp}.webm`
+  const suffix = String(ext || 'webm').replace(/^\./, '')
+  return `${clean}-${stamp}.${suffix}`
 }

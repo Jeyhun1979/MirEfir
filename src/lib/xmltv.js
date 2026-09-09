@@ -240,10 +240,10 @@ export function bindEpgToChannels(playlistChannels, xmltv) {
     if (!epgId) epgId = prefixFallback(nameIndex, [...nameKeys, ...idKeys])
 
     const programs = (epgId && xmltv.programs[epgId]) || []
-    if (programs.length) matched += 1
-    epg[channel.id] = programs
-    if (channel.tvgId) epg[channel.tvgId] = programs
-    if (epgId) epg[epgId] = programs
+    if (programs.length) {
+      matched += 1
+      epg[channel.id] = programs
+    }
 
     const icon = xmltv.channels?.[epgId]?.icon || ''
     return {
@@ -336,9 +336,5 @@ export function mergeXmltv(parts) {
 
 export async function loadXmltv(url, options = {}) {
   const buffer = await fetchBinary(url)
-  try {
-    return await parseInWorker(buffer.slice(0), options)
-  } catch {
-    return parseXmltvBuffer(buffer, Date.now(), options)
-  }
+  return parseInWorker(buffer.slice(0), options)
 }

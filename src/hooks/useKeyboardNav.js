@@ -34,6 +34,7 @@ export function useKeyboardNav() {
     closeOverlays,
     setUiScreen,
     moveChannel,
+    swapPreviousChannel,
     moveGroup,
     selectedChannel,
     channels,
@@ -250,6 +251,12 @@ export function useKeyboardNav() {
         return
       }
 
+      if (isFullscreen && !liveGuideOpen && selectedChannel && dir === 'right' && !typing) {
+        event.preventDefault()
+        swapPreviousChannel()
+        return
+      }
+
       if (isOkKey(event) || matchesBinding(event, keys.fullscreen)) {
         if (typing) return
         event.preventDefault()
@@ -323,6 +330,7 @@ export function useKeyboardNav() {
     setIsFullscreen,
     setUiScreen,
     settings.keys,
+    swapPreviousChannel,
     toggleFavorite,
     toggleLiveGuide,
     toggleMute,

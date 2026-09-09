@@ -26,6 +26,7 @@ export function VideoPlayer({ fullscreen = false }) {
     streamUrl,
     playback,
     playProgram,
+    failArchive,
     seekArchive,
     seekToMs,
     selectChannel,
@@ -39,6 +40,7 @@ export function VideoPlayer({ fullscreen = false }) {
     volumeTick,
     uiScreen,
     settings,
+    error: playerError,
     updateSettings,
     recordingActive,
     setRecordingActive,
@@ -54,6 +56,14 @@ export function VideoPlayer({ fullscreen = false }) {
   const pauseForMulti = uiScreen === 'multiview' && !recordingActive
   const { error, loading } = useHls(videoRef, pauseForMulti ? '' : streamUrl, {
     fallbacks: pauseForMulti ? [] : playback?.urls || [],
+    bufferSec: playback?.mode === 'archive' ? 45 : settings.bufferSec,
+    requireVod: playback?.mode === 'archive',
+    liveUrl: selectedChannel?.url || '',
+    expectedDurationSec:
+      playback?.mode === 'archive'
+        ? Math.max(60, Math.round(((playback.originEnd || playback.end) - (playback.originStart || playback.start)) / 1000))
+        : 0,
+    onUnavailable: () => failArchive(),
   })
   const recorder = useRecorder(videoRef, selectedChannel, settings, updateSettings)
   const [showVolume, setShowVolume] = useState(false)
@@ -109,15 +119,20 @@ export function VideoPlayer({ fullscreen = false }) {
     if (!hasBounds) return
     const next = clampMs(targetMs)
     const video = videoRef.current
+    const playSpanSec = archive
+      ? Math.max(1, ((playback.end || boundsEnd) - (playback.start || boundsStart)) / 1000)
+      : durationMs / 1000
     if (video) {
       const ranges = video.seekable
       if (ranges.length) {
         const start = ranges.start(0)
         const end = ranges.end(ranges.length - 1)
+        const span = Math.max(0, end - start)
+        const tooShortForArchive = archive && playSpanSec >= 90 && span < Math.min(90, playSpanSec * 0.35)
         const mediaTime = archive
           ? video.currentTime + (next - actualMs) / 1000
           : end - (Date.now() - next) / 1000
-        if (mediaTime >= start - 0.05 && mediaTime <= end + 0.25) {
+        if (!tooShortForArchive && mediaTime >= start - 0.05 && mediaTime <= end + 0.25) {
           video.currentTime = Math.min(end, Math.max(start, mediaTime))
           return
         }
@@ -132,7 +147,7 @@ export function VideoPlayer({ fullscreen = false }) {
       originEnd: boundsEnd,
       start: boundsStart,
       end: boundsEnd,
-      title: program?.title || playback?.title,
+      title: playback?.title || program?.title,
     })
   }
 
@@ -513,7 +528,7 @@ export function VideoPlayer({ fullscreen = false }) {
       <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-4">
         <div className="text-sm text-white/90">
           {archive ? 'Архив · ' : ''}
-          {program?.title || playback?.title || 'Прямой эфир'}
+          {archive ? playback?.title || program?.title || 'Архив' : program?.title || 'Прямой эфир'}
         </div>
         <div className="text-xs text-white/50">
           {hasBounds ? formatRange(boundsStart, boundsEnd) : selectedChannel?.group}
@@ -558,8 +573,8 @@ export function VideoPlayer({ fullscreen = false }) {
             </div>
           </div>
         ) : null}
-        {recHint || recorder.error ? (
-          <div className="mt-2 text-[11px] text-red-300">{recHint || recorder.error}</div>
+        {recHint || recorder.error || playerError ? (
+          <div className="mt-2 text-[11px] text-red-300">{recHint || recorder.error || playerError}</div>
         ) : null}
         <div className="mt-2 text-[11px] text-white/35">
           {fullscreen || focusZone === 'player'

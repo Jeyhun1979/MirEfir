@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { StreamTile } from '../player/StreamTile.jsx'
 import { formatBytes, listStoredRecordings, recordingPlayUrl } from '../../lib/storage.js'
-import { arrowDir, isOkKey } from '../../lib/remoteKeys.js'
+import { arrowDir, isBackKey, isOkKey } from '../../lib/remoteKeys.js'
 import { usePlayer } from '../../store/PlayerContext.jsx'
 
 function readLocalRecordings() {
@@ -19,7 +19,7 @@ function layoutClass(count) {
 }
 
 export function RecordingsScreen() {
-  const { uiScreen, closeOverlays, openSettings, settings } = usePlayer()
+  const { uiScreen, closeOverlays, goBack, openSettings, settings } = usePlayer()
   const [items, setItems] = useState(readLocalRecordings)
   const [playing, setPlaying] = useState(null)
   const [playError, setPlayError] = useState('')
@@ -50,6 +50,22 @@ export function RecordingsScreen() {
       cancelled = true
     }
   }, [settings.recordingPath, uiScreen])
+
+  useEffect(() => {
+    if (uiScreen !== 'recordings') return undefined
+    const onKey = (event) => {
+      if (!isBackKey(event)) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (playing) {
+        setPlaying(null)
+        return
+      }
+      goBack()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [goBack, playing, uiScreen])
 
   if (uiScreen !== 'recordings') return null
 
@@ -120,7 +136,7 @@ export function RecordingsScreen() {
 }
 
 export function MultiViewScreen() {
-  const { uiScreen, closeOverlays, channels, selectedChannel } = usePlayer()
+  const { uiScreen, closeOverlays, goBack, channels, selectedChannel } = usePlayer()
   const [tiles, setTiles] = useState([])
   const [focused, setFocused] = useState(0)
   const [picker, setPicker] = useState(false)
@@ -141,6 +157,22 @@ export function MultiViewScreen() {
     setPicker(false)
     setQuery('')
   }, [uiScreen])
+
+  useEffect(() => {
+    if (uiScreen !== 'multiview') return undefined
+    const onKey = (event) => {
+      if (!isBackKey(event)) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (picker) {
+        setPicker(false)
+        return
+      }
+      goBack()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [goBack, picker, uiScreen])
 
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -243,7 +275,7 @@ export function MultiViewScreen() {
 }
 
 export function HistoryScreen() {
-  const { uiScreen, closeOverlays, openMenu, watchHistory, clearHistory, selectChannel, channels } = usePlayer()
+  const { uiScreen, closeOverlays, goBack, openMenu, watchHistory, clearHistory, selectChannel, channels } = usePlayer()
   const [cursor, setCursor] = useState(0)
 
   const items = watchHistory || []
@@ -263,6 +295,12 @@ export function HistoryScreen() {
         setCursor((current) => (current + (dir === 'down' ? 1 : -1) + items.length) % items.length)
         return
       }
+      if (isBackKey(event)) {
+        event.preventDefault()
+        event.stopPropagation()
+        goBack()
+        return
+      }
       if (isOkKey(event) && items[cursor]) {
         event.preventDefault()
         event.stopPropagation()
@@ -272,7 +310,7 @@ export function HistoryScreen() {
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [closeOverlays, cursor, items, selectChannel, uiScreen])
+  }, [closeOverlays, cursor, goBack, items, selectChannel, uiScreen])
 
   if (uiScreen !== 'history') return null
 
