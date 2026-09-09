@@ -512,7 +512,7 @@ export function PlayerProvider({ children }) {
 
   const failArchive = useCallback(() => {
     setStreamOverride(null)
-    setError('Не удалось перемотать: сервер отдал прямой эфир вместо записи.')
+    setError('Не удалось перемотать: запись на этом участке недоступна.')
   }, [])
 
   const channelAllowsArchive = useCallback(

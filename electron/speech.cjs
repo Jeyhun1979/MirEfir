@@ -95,38 +95,8 @@ function listenWindowsSpeech(payload = {}) {
   })
 }
 
-async function transcribePcm(payload = {}) {
-  const raw = payload.pcm
-  if (!raw) return { ok: false, error: 'NO_AUDIO' }
-  const body = Buffer.isBuffer(raw) ? raw : Buffer.from(raw)
-  if (body.length < 3200) return { ok: true, text: '', intent: '', grammar: '', confidence: 0 }
-  const lang = String(payload.lang || 'ru-RU')
-  try {
-    const url = `https://www.google.com/speech-api/v2/recognize?client=chromium&lang=${encodeURIComponent(lang)}&key=AIzaSyBOti4mM-6x9WDnZIjIeyEUHhQTh-ILmRI&output=json&maxresults=3&pfilter=0`
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'audio/l16; rate=16000',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-      },
-      body,
-    })
-    const text = await response.text()
-    let best = ''
-    for (const line of String(text || '').split(/\r?\n/)) {
-      if (!line.trim()) continue
-      try {
-        const data = JSON.parse(line)
-        const alt = data.result?.[0]?.alternative?.[0]
-        if (alt?.transcript) best = String(alt.transcript).trim()
-      } catch {
-        /* ignore non-json */
-      }
-    }
-    return { ok: true, text: best, intent: '', grammar: 'dictation', confidence: 0 }
-  } catch {
-    return { ok: false, error: 'network' }
-  }
+async function transcribePcm() {
+  return { ok: false, error: 'NO_VOSK' }
 }
 
 const SPEECH_PS1 = [

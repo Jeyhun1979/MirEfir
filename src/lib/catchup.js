@@ -193,6 +193,13 @@ export function catchupUrlCandidates(channel, startMs, endMs) {
     urls.push(value)
   }
 
+  const xtream = type.includes('xc') || type.includes('default') || type.includes('shift') || type === '' || type.includes('timeshift')
+  const indexPlaylist = /\/index\.m3u8/i.test(channel.url)
+  const flussonic = type.includes('flussonic') || type.includes('fs') || indexPlaylist || /video\.m3u8/i.test(channel.url)
+  const append = type.includes('append') || type.includes('shift') || type.includes('default') || flussonic || !type
+
+  if (indexPlaylist) add(appendUtc(channel.url, start, finish))
+
   const source = String(channel.catchupSource || '').trim()
   if (source) {
     add(fillTemplate(source, start, finish))
@@ -205,11 +212,7 @@ export function catchupUrlCandidates(channel, startMs, endMs) {
     }
   }
 
-  const xtream = type.includes('xc') || type.includes('default') || type.includes('shift') || type === '' || type.includes('timeshift')
-  const flussonic = type.includes('flussonic') || type.includes('fs') || /index\.m3u8|video\.m3u8/i.test(channel.url)
-  const append = type.includes('append') || type.includes('shift') || type.includes('default') || flussonic || !type
-
-  if (flussonic || append || source) add(appendUtc(channel.url, start, finish))
+  if (!indexPlaylist && (flussonic || append || source)) add(appendUtc(channel.url, start, finish))
   if (flussonic) {
     add(flussonicTimeshift(channel.url, start, finish))
     add(flussonicAbs(channel.url, start))

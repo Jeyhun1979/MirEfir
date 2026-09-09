@@ -1,9 +1,23 @@
-const { app, BrowserWindow, ipcMain, dialog, session, shell } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, session, shell, protocol } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const { pathToFileURL } = require('url')
 const { registerUpdateIpc, isApplyingUpdate } = require('./updater.cjs')
-const { listenWindowsSpeech, cancelWindowsSpeech, transcribePcm } = require('./speech.cjs')
+const { cancelWindowsSpeech } = require('./speech.cjs')
+const { ensureVoskModel, registerVoskProtocol } = require('./vosk.cjs')
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'mirefir-vosk',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+    },
+  },
+])
 
 const DEV_URL = 'http://127.0.0.1:5173'
 const CONFIG_NAME = 'mirefir-config.json'
@@ -115,6 +129,7 @@ app.whenReady().then(() => {
     callback({ requestHeaders: headers })
   })
 
+  registerVoskProtocol(protocol)
   createWindow()
   registerUpdateIpc()
 
@@ -227,8 +242,9 @@ ipcMain.handle('app:info', () => ({
   portable: Boolean(process.env.PORTABLE_EXECUTABLE_DIR),
 }))
 
-ipcMain.handle('speech:listen', async (_event, payload) => listenWindowsSpeech(payload || {}))
-ipcMain.handle('speech:transcribe', async (_event, payload) => transcribePcm(payload || {}))
+ipcMain.handle('speech:listen', async () => ({ ok: false, error: 'NO_VOSK' }))
+ipcMain.handle('speech:transcribe', async () => ({ ok: false, error: 'NO_VOSK' }))
+ipcMain.handle('speech:ensure-vosk', async () => ensureVoskModel())
 ipcMain.handle('speech:cancel', () => {
   cancelWindowsSpeech()
   return true

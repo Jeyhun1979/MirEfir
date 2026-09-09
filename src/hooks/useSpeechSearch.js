@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { getVoskModel, recognizePcm16 } from '../lib/voskClient.js'
 
 function SpeechEngine() {
   return window.SpeechRecognition || window.webkitSpeechRecognition || null
 }
 
-function hasElectronSpeech() {
-  return typeof window.mirefir?.listenSpeech === 'function' && /windows/i.test(navigator.userAgent)
+function hasElectronVosk() {
+  return typeof window.mirefir?.ensureVosk === 'function'
 }
 
 function errorText(code) {
@@ -14,9 +15,6 @@ function errorText(code) {
   if (code === 'not-allowed' || code === 'service-not-allowed') {
     return 'Нужно разрешить доступ к микрофону в системе и в приложении.'
   }
-  if (code === 'NO_LANG') return 'Распознавание речи Windows недоступно. Введите название текстом.'
-  if (code === 'NO_PS') return 'Не удалось запустить распознавание речи Windows.'
-  if (code === 'network') return 'Не удалось распознать голос. Проверьте интернет и повторите.'
   if (code === 'aborted') return ''
   return 'Не услышали. Скажите название канала или «переключи на …».'
 }
@@ -74,7 +72,7 @@ async function recordPcm16(seconds, isCancelled) {
   return toPcm16(mergeFloat(chunks), rate)
 }
 
-export function useSpeechSearch(onResult, lang = 'ru-RU', phrasesRef) {
+export function useSpeechSearch(onResult, lang = 'ru-RU') {
   const recRef = useRef(null)
   const streamRef = useRef(null)
   const heardRef = useRef('')
@@ -82,8 +80,9 @@ export function useSpeechSearch(onResult, lang = 'ru-RU', phrasesRef) {
   const onResultRef = useRef(onResult)
   onResultRef.current = onResult
   const [listening, setListening] = useState(false)
+  const [status, setStatus] = useState('')
   const [error, setError] = useState('')
-  const supported = hasElectronSpeech() || Boolean(SpeechEngine()) || Boolean(navigator.mediaDevices?.getUserMedia)
+  const supported = hasElectronVosk() || Boolean(SpeechEngine()) || Boolean(navigator.mediaDevices?.getUserMedia)
 
   const releaseMic = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop())
@@ -101,11 +100,13 @@ export function useSpeechSearch(onResult, lang = 'ru-RU', phrasesRef) {
     window.mirefir?.cancelSpeech?.()
     releaseMic()
     setListening(false)
+    setStatus('')
   }, [releaseMic])
 
   const start = useCallback(async () => {
     stop()
     setError('')
+    setStatus('')
     heardRef.current = ''
     const gen = genRef.current
     const emit = (text, extra) => onResultRef.current(text, extra)
@@ -121,65 +122,50 @@ export function useSpeechSearch(onResult, lang = 'ru-RU', phrasesRef) {
       emit(next, { final: true, ...extra })
     }
 
-    const listenOnline = async () => {
-      if (!window.mirefir?.transcribeSpeech || !navigator.mediaDevices?.getUserMedia) return null
-      const pcm = await recordPcm16(6.5, () => !stillThis())
-      if (!stillThis()) return { cancelled: true }
-      const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength)
-      return window.mirefir.transcribeSpeech({ pcm: bytes, lang })
-    }
-
-    if (hasElectronSpeech()) {
+    if (hasElectronVosk()) {
       setListening(true)
-      try {
-        const result = await window.mirefir.listenSpeech({
-          phrases: phrasesRef?.current || [],
-          seconds: 8,
-        })
+      setStatus('Готовлю офлайн-распознавание…')
+      const offProgress = window.mirefir.onVoskProgress?.((info) => {
         if (!stillThis()) return
-        if (result?.ok && String(result.text || '').trim()) {
-          finishText(result.text, {
-            intent: result.intent || '',
-            grammar: result.grammar || '',
-            confidence: result.confidence || 0,
-          })
+        if (info?.text) setStatus(info.text)
+      })
+      try {
+        const ready = await window.mirefir.ensureVosk()
+        if (!stillThis()) return
+        if (!ready?.ok) {
+          setError(ready?.error || 'Не удалось подготовить голосовую модель.')
           return
         }
-        if (result?.error && result.error !== 'NO_RU' && result.error !== 'NO_LANG' && result.error !== 'network') {
-          setError(errorText(result.error))
-          return
+        setStatus('Слушаю…')
+        const pcm = await recordPcm16(6.5, () => !stillThis())
+        if (!stillThis()) return
+        setStatus('Распознаю…')
+        let model
+        try {
+          model = await getVoskModel(ready.url || 'mirefir-vosk://model.tar.gz')
+        } catch {
+          if (!ready.fileUrl) throw new Error('Голосовая модель недоступна')
+          model = await getVoskModel(ready.fileUrl)
         }
-        const online = await listenOnline()
-        if (!stillThis() || online?.cancelled) return
-        if (!online?.ok) {
-          setError(errorText(online?.error || result?.error || 'no-speech'))
-          return
-        }
-        finishText(online.text, { grammar: online.grammar || 'dictation' })
-      } catch {
-        if (stillThis()) setError('Не удалось запустить распознавание речи.')
+        if (!stillThis()) return
+        const text = await recognizePcm16(model, pcm)
+        if (!stillThis()) return
+        finishText(text, { grammar: 'dictation' })
+      } catch (err) {
+        if (stillThis()) setError(err.message || 'Не удалось распознать голос.')
       } finally {
-        if (stillThis()) setListening(false)
+        offProgress?.()
+        if (stillThis()) {
+          setListening(false)
+          setStatus('')
+        }
       }
       return
     }
 
     const Ctor = SpeechEngine()
     if (!Ctor) {
-      setListening(true)
-      try {
-        const online = await listenOnline()
-        if (!stillThis() || online?.cancelled) return
-        if (!online?.ok) {
-          setError(errorText(online?.error || 'no-speech'))
-          return
-        }
-        finishText(online.text, { grammar: online.grammar || 'dictation' })
-      } catch {
-        if (stillThis()) setError('Нужен доступ к микрофону.')
-      } finally {
-        if (stillThis()) setListening(false)
-      }
+      setError('Голосовой поиск на этой платформе недоступен.')
       return
     }
 
@@ -240,9 +226,9 @@ export function useSpeechSearch(onResult, lang = 'ru-RU', phrasesRef) {
     window.setTimeout(() => {
       if (recRef.current === rec) stop()
     }, 8000)
-  }, [lang, phrasesRef, releaseMic, stop])
+  }, [lang, releaseMic, stop])
 
   useEffect(() => () => stop(), [stop])
 
-  return { supported, listening, error, setError, start, stop }
+  return { supported, listening, status, error, setError, start, stop }
 }

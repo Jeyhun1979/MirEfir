@@ -25,6 +25,7 @@ function createEngine(compact = false, bufferSec = 15, vod = false) {
     capLevelToPlayerSize: compact,
     startLevel: compact ? 0 : -1,
     liveSyncDurationCount: vod ? 1 : 3,
+    startPosition: vod ? 0 : -1,
     startFragPrefetch: true,
     testBandwidth: false,
     manifestLoadingMaxRetry: 1,
@@ -147,27 +148,19 @@ export function useHls(videoRef, src, options = {}) {
       hls.attachMedia(video)
 
       const looksLikeLiveEdge = (details) => {
-        const firstUrl = details?.fragments?.[0]?.relurl || details?.fragments?.[0]?.url || ''
-        const segMs = segmentTimeMs(firstUrl)
-        if (archiveStartMs && segMs) {
-          if (Math.abs(segMs - archiveStartMs) <= 180000) return false
-          if (Math.abs(segMs - Date.now()) <= 45000 && Date.now() - archiveStartMs > 120000) return true
-        }
-        const live = Boolean(details?.live) || video.duration === Infinity
-        const ranges = video.seekable
-        const span = ranges.length
-          ? Math.max(0, ranges.end(ranges.length - 1) - ranges.start(0))
-          : Number.isFinite(video.duration)
-            ? video.duration
-            : 0
-        const toEdge = ranges.length ? ranges.end(ranges.length - 1) - video.currentTime : 0
-        if (expectedSec >= 90 && span > 0 && span < Math.min(90, expectedSec * 0.3)) return true
-        if (live && expectedSec >= 90 && span < 90) return true
-        if (live && toEdge < 22 && span < 180) return true
+        const frags = details?.fragments || []
+        const last = frags[frags.length - 1]
+        const lastMs = segmentTimeMs(last?.relurl || last?.url || '')
+        const pdt = Number(last?.programDateTime) || 0
+        const edgeMs = lastMs || pdt
+        if (edgeMs) return Date.now() - edgeMs <= 45000
+        if (/[?&](utc|lutc)=/i.test(current)) return false
+        if (/timeshift_abs|timeshift_rel|\/timeshift\//i.test(current)) return false
         return false
       }
 
       const rejectLive = () => {
+        if (/[?&](utc|lutc)=/i.test(current)) return
         if (tryNext()) {
           hls.stopLoad()
           return
@@ -180,6 +173,14 @@ export function useHls(videoRef, src, options = {}) {
       let netFails = 0
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         netFails = 0
+        if (requireVod) {
+          try {
+            const start = video.seekable?.length ? video.seekable.start(0) : 0
+            if (Number.isFinite(start)) video.currentTime = start
+          } catch {
+            /* ignore */
+          }
+        }
         play()
       })
 

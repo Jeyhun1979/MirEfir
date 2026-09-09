@@ -220,8 +220,10 @@ export function SearchOverlay() {
             </svg>
           </button>
         </div>
-        {speech.listening ? (
-          <div className="mb-3 text-xs text-accent">Слушаю… название найдёт, «переключи на» сразу включит</div>
+        {speech.listening || speech.status ? (
+          <div className="mb-3 text-xs text-accent">
+            {speech.status || 'Слушаю… название найдёт, «переключи на» сразу включит'}
+          </div>
         ) : null}
         {speech.error ? <div className="mb-3 text-xs text-red-300">{speech.error}</div> : null}
         {voiceNote ? <div className="mb-3 text-xs text-red-300">{voiceNote}</div> : null}
