@@ -113,6 +113,18 @@ function decodeXml(value) {
     .trim()
 }
 
+function extractTagText(block, tag) {
+  const re = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, 'gi')
+  let best = ''
+  for (const match of block.matchAll(re)) {
+    let inner = match[1] || ''
+    inner = inner.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    inner = decodeXml(inner.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '))
+    if (inner.length > best.length) best = inner
+  }
+  return best
+}
+
 function attr(block, name) {
   const match = block.match(new RegExp(`${name}="([^"]*)"`))
   return match ? decodeXml(match[1]) : ''
@@ -140,11 +152,11 @@ function ingestBlock(block, isChannel, channels, programs, from, to) {
   if (stop < from || start > to) return
 
   if (!programs[channelId]) programs[channelId] = []
-  let description = decodeXml(block.match(/<desc[^>]*>([^<]*)<\/desc>/i)?.[1] || '')
+  let description = extractTagText(block, 'desc')
   if (description.length > DESC_LIMIT) description = `${description.slice(0, DESC_LIMIT).replace(/\s+\S*$/, '')}…`
   programs[channelId].push({
     id: `${channelId}-${start}`,
-    title: decodeXml(block.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1]) || 'Программа',
+    title: extractTagText(block, 'title') || 'Программа',
     start,
     end: stop,
     description,

@@ -13,6 +13,16 @@ contextBridge.exposeInMainWorld('mirefir', {
   listRecordings: (folder) => ipcRenderer.invoke('storage:list-files', folder),
   fileUrl: (filePath) => ipcRenderer.invoke('storage:file-url', filePath),
   quit: () => ipcRenderer.invoke('app:quit'),
+  minimize: () => ipcRenderer.invoke('window:minimize'),
+  toggleFullscreen: () => ipcRenderer.invoke('window:toggle-fullscreen'),
+  setFullscreen: (on) => ipcRenderer.invoke('window:set-fullscreen', on),
+  isFullscreen: () => ipcRenderer.invoke('window:is-fullscreen'),
+  closeWindow: () => ipcRenderer.invoke('window:close'),
+  onFullscreen: (handler) => {
+    const listen = (_event, value) => handler(value)
+    ipcRenderer.on('window:fullscreen', listen)
+    return () => ipcRenderer.removeListener('window:fullscreen', listen)
+  },
   loadPersist: () => ipcRenderer.invoke('config:load'),
   savePersist: (data) => ipcRenderer.invoke('config:save', data),
   appInfo: () => ipcRenderer.invoke('app:info'),

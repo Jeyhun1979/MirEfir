@@ -1,4 +1,4 @@
-export const APP_VERSION = '1.0.14'
+export const APP_VERSION = '1.0.15'
 export const GITHUB_OWNER = 'Jeyhun1979'
 export const GITHUB_REPO = 'MirEfir'
 

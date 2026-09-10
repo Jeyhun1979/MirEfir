@@ -14,6 +14,7 @@ import { Sidebar } from './components/Sidebar.jsx'
 import { TopBar } from './components/TopBar.jsx'
 import { ExitPrompt } from './components/ExitPrompt.jsx'
 import { LiveGuideOverlay } from './components/LiveGuideOverlay.jsx'
+import { WindowChrome } from './components/WindowChrome.jsx'
 import { VideoPlayer } from './components/VideoPlayer.jsx'
 import { useAirMouse } from './hooks/useAirMouse.js'
 import { useKeyboardNav } from './hooks/useKeyboardNav.js'
@@ -28,8 +29,10 @@ export default function App() {
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return undefined
+    StatusBar.hide().catch(() => {})
+    StatusBar.setOverlaysWebView({ overlay: true }).catch(() => {})
     StatusBar.setStyle({ style: Style.Dark }).catch(() => {})
-    StatusBar.setBackgroundColor({ color: '#06070a' }).catch(() => {})
+    StatusBar.setBackgroundColor({ color: '#000000' }).catch(() => {})
     let handle
     CapApp.addListener('backButton', () => {
       goBack()
@@ -44,6 +47,7 @@ export default function App() {
   if (needsSetup) {
     return (
       <div className="relative flex h-full flex-col bg-black text-white">
+        <WindowChrome />
         <PlaylistModal />
         <UpdateDialog />
       </div>
@@ -52,6 +56,7 @@ export default function App() {
 
   return (
     <div className="relative flex h-full flex-col bg-void text-white">
+      <WindowChrome />
       {!isFullscreen ? <TopBar /> : null}
 
       <div className="flex min-h-0 flex-1">

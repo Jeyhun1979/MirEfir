@@ -125,3 +125,33 @@ textarea {
     transform: translateX(-100%);
   }
 }
+
+.window-chrome-drag {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+.window-chrome-controls,
+.window-chrome-btn {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.window-chrome-btn {
+  display: flex;
+  height: 100%;
+  width: 46px;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.window-chrome-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.window-chrome-close:hover {
+  background: #e81123;
+  color: #fff;
+}

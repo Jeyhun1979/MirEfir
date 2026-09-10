@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, session, shell, protocol } = requir
 const path = require('path')
 const fs = require('fs')
 const { pathToFileURL } = require('url')
-const { registerUpdateIpc, isApplyingUpdate, installInProgress, spawnInstallSplash } = require('./updater.cjs')
+const { registerUpdateIpc, isApplyingUpdate, clearInstallLock } = require('./updater.cjs')
 const { cancelWindowsSpeech } = require('./speech.cjs')
 const { ensureVoskModel, registerVoskProtocol, transcribePcm } = require('./vosk.cjs')
 
@@ -58,20 +58,15 @@ function migrateLegacyProfile() {
   }
 }
 
-const installingNow = process.platform === 'win32' && installInProgress()
-if (installingNow) spawnInstallSplash()
-
-const gotLock = installingNow ? false : app.requestSingleInstanceLock()
-if (installingNow) {
-  app.exit(0)
-} else if (!gotLock) {
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
   app.exit(0)
 } else {
   app.on('second-instance', () => {
-    if (installInProgress()) return
     const win = BrowserWindow.getAllWindows()[0]
     if (!win) return
     if (win.isMinimized()) win.restore()
+    if (win.isFullScreen()) win.setFullScreen(true)
     win.show()
     win.focus()
   })
@@ -92,6 +87,19 @@ function forceQuit() {
   app.exit(0)
 }
 
+function wireWindowIpc(win) {
+  const sendFs = () => {
+    if (!win.isDestroyed()) win.webContents.send('window:fullscreen', win.isFullScreen())
+  }
+  win.on('enter-full-screen', sendFs)
+  win.on('leave-full-screen', sendFs)
+  win.on('maximize', () => {
+    if (win.isDestroyed() || win.isFullScreen()) return
+    win.unmaximize()
+    win.setFullScreen(true)
+  })
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1680,
@@ -100,7 +108,9 @@ function createWindow() {
     minHeight: 700,
     backgroundColor: '#06070a',
     title: 'MirEfir',
+    frame: false,
     autoHideMenuBar: true,
+    fullscreenable: true,
     show: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -110,6 +120,10 @@ function createWindow() {
       backgroundThrottling: false,
     },
   })
+
+  win.setMenuBarVisibility(false)
+  wireWindowIpc(win)
+  win.webContents.once('did-finish-load', () => clearInstallLock())
 
   win.on('closed', () => {
     if (process.platform !== 'darwin') forceQuit()
@@ -241,6 +255,36 @@ ipcMain.handle('shell:mic-settings', async () => {
 
 ipcMain.handle('app:quit', () => {
   forceQuit()
+})
+
+function fromSender(event) {
+  return BrowserWindow.fromWebContents(event.sender)
+}
+
+ipcMain.handle('window:minimize', (event) => {
+  fromSender(event)?.minimize()
+})
+
+ipcMain.handle('window:toggle-fullscreen', (event) => {
+  const win = fromSender(event)
+  if (!win) return false
+  win.setFullScreen(!win.isFullScreen())
+  return win.isFullScreen()
+})
+
+ipcMain.handle('window:set-fullscreen', (event, on) => {
+  const win = fromSender(event)
+  if (!win) return false
+  win.setFullScreen(Boolean(on))
+  return win.isFullScreen()
+})
+
+ipcMain.handle('window:is-fullscreen', (event) => Boolean(fromSender(event)?.isFullScreen()))
+
+ipcMain.handle('window:close', (event) => {
+  const win = fromSender(event)
+  if (!win) return
+  win.close()
 })
 
 ipcMain.handle('config:load', async () => {

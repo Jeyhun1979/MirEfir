@@ -117,7 +117,11 @@ function DetailCard({ program, now, focused, cardRef }) {
           <span className="block h-full bg-white" style={{ width: `${progress * 100}%` }} />
         </div>
       ) : null}
-      {program.description ? <div className="mt-2 text-[13px] leading-relaxed text-white/75">{program.description}</div> : null}
+      {program.description ? (
+        <div className="mt-2 text-[13px] leading-relaxed text-white/75">{program.description}</div>
+      ) : (
+        <div className="mt-2 text-[13px] text-white/45">Нет описания</div>
+      )}
     </div>
   )
 }
@@ -170,7 +174,7 @@ export function LiveGuideOverlay() {
   const openedRef = useRef(false)
   const okTimer = useRef(0)
   const okHeld = useRef(false)
-  const alignLiveRef = useRef(true)
+  const pendingAlignRef = useRef('live')
 
   const list = useMemo(() => {
     const hidden = settings.hiddenGroups || []
@@ -236,7 +240,7 @@ export function LiveGuideOverlay() {
     setChannelCursor(index)
     setDaysOpen(Boolean(settings.archiveEnabled))
     setFocusCol(liveGuideView === 'groups' ? 'groups' : 'channels')
-    alignLiveRef.current = true
+    pendingAlignRef.current = 'live'
     requestAnimationFrame(() => {
       const el = channelRef.current
       if (!el) return
@@ -253,18 +257,9 @@ export function LiveGuideOverlay() {
     }
     const current = getCurrentProgram(focusedChannel)
     const liveIndex = visiblePrograms.findIndex((item) => item.id === current?.id || (current && item.start === current.start))
-    alignLiveRef.current = true
-    setProgramCursor(liveIndex >= 0 ? liveIndex : 0)
-  }, [focusedChannel?.id, liveGuideView, visiblePrograms.length])
-
-  useEffect(() => {
-    if (focusCol !== 'days' || !visiblePrograms.length) return
-    const current = getCurrentProgram(focusedChannel)
-    const liveIndex = visiblePrograms.findIndex((item) => item.id === current?.id || (current && item.start === current.start))
-    const sameDay = visiblePrograms.findIndex((item) => startOfDay(item.start) === selectedDay)
-    const index = selectedDay === todayStamp && liveIndex >= 0 ? liveIndex : sameDay
-    if (index >= 0) setProgramCursor(index)
-  }, [focusCol, selectedDay, todayStamp, visiblePrograms])
+    pendingAlignRef.current = 'live'
+    setProgramCursor(selectedDay === todayStamp && liveIndex >= 0 ? liveIndex : 0)
+  }, [focusedChannel?.id, liveGuideView, selectedDay, todayStamp, visiblePrograms.length])
 
   useEffect(() => {
     if (detailRef.current) detailRef.current.scrollTop = 0
@@ -294,26 +289,34 @@ export function LiveGuideOverlay() {
   }, [liveGuideView])
 
   useEffect(() => {
-    const prog = programRef.current?.querySelector(`[data-prog="${programCursor}"]`)
-    if (!prog) return
-    if (!alignLiveRef.current) {
-      prog.scrollIntoView({ block: 'nearest' })
-      return
-    }
-    const frame = window.requestAnimationFrame(() => {
-      const node = programRef.current?.querySelector(`[data-prog="${programCursor}"]`)
+    if (!liveGuideView) return undefined
+    let tries = 0
+    let frame = 0
+    const run = () => {
       const list = programRef.current
-      if (!node || !list) return
-      const dayEl = dayRef.current?.querySelector(`[data-day="${dayCursor}"]`)
-      alignLiveRef.current = false
-      if (dayEl) {
-        const dayMid = dayEl.getBoundingClientRect().top + dayEl.getBoundingClientRect().height / 2
-        const progMid = node.getBoundingClientRect().top + node.getBoundingClientRect().height / 2
-        list.scrollTop = Math.max(0, list.scrollTop + (progMid - dayMid))
+      const node = list?.querySelector(`[data-prog="${programCursor}"]`)
+      if (!list || !node) {
+        if (tries < 12) {
+          tries += 1
+          frame = window.requestAnimationFrame(run)
+        }
         return
       }
-      centerChild(list, node)
-    })
+      const mode = pendingAlignRef.current
+      if (mode === 'live' || mode === 'day') {
+        const dayEl = dayRef.current?.querySelector(`[data-day="${dayCursor}"]`)
+        const box = list.getBoundingClientRect()
+        const targetMid = dayEl
+          ? dayEl.getBoundingClientRect().top + dayEl.getBoundingClientRect().height / 2
+          : box.top + box.height / 2
+        const progMid = node.getBoundingClientRect().top + node.getBoundingClientRect().height / 2
+        list.scrollTop = Math.max(0, list.scrollTop + (progMid - targetMid))
+        pendingAlignRef.current = null
+        return
+      }
+      node.scrollIntoView({ block: 'nearest' })
+    }
+    frame = window.requestAnimationFrame(run)
     return () => window.cancelAnimationFrame(frame)
   }, [channelCursor, dayCursor, daysOpen, focusedChannel?.id, liveGuideView, programCursor])
 
@@ -508,10 +511,10 @@ export function LiveGuideOverlay() {
             return
           }
           if (focusCol === 'days') {
-            alignLiveRef.current = false
+            pendingAlignRef.current = 'day'
             setDayCursor((current) => Math.min(days.length - 1, Math.max(0, current + step)))
           } else if (focusCol === 'programs') {
-            alignLiveRef.current = false
+            pendingAlignRef.current = null
             setProgramCursor((current) => wrapIndex(current + step, visiblePrograms.length))
           } else moveChannel(step)
         }
@@ -713,11 +716,12 @@ export function LiveGuideOverlay() {
                   {focusedChannel?.number} {focusedChannel?.displayName}
                 </div>
               </div>
-              <div ref={programRef} className="scroll-thin flex-1 overflow-y-auto px-2 pb-4">
+              <div ref={programRef} className="scroll-thin flex-1 overflow-y-auto px-2 pb-4" style={{ paddingBottom: '42vh' }}>
                 {visiblePrograms.map((program, index) => {
                   const day = startOfDay(program.start)
                   const prevDay = index > 0 ? startOfDay(visiblePrograms[index - 1].start) : null
                   const hovered = focusCol === 'programs' && index === programCursor
+                  const selected = index === programCursor
                   const current = program.start <= now.getTime() && now.getTime() < program.end
                   const past = program.end <= now.getTime()
                   const archive =
@@ -743,8 +747,8 @@ export function LiveGuideOverlay() {
                           setProgramCursor(index)
                           setFocusCol('programs')
                         }}
-                        className={`remote-hit mb-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] ${
-                          hovered ? 'bg-accent/75 text-white' : current ? 'text-sky-300' : 'text-white/75 hover:bg-white/8'
+                        className={`mb-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] ${
+                          hovered ? 'bg-accent/75 text-white' : selected ? 'bg-white/12 text-white' : current ? 'text-sky-300' : 'text-white/75 hover:bg-white/8'
                         }`}
                       >
                         <span className={`w-11 shrink-0 tabular-nums ${current && !hovered ? 'text-sky-300' : 'text-white/55'}`}>
@@ -788,7 +792,7 @@ export function LiveGuideOverlay() {
         ) : null}
 
         {liveGuideView === 'channels' || liveGuideView === 'schedule' ? (
-          <div className={`absolute top-5 right-5 z-10 ${focusCol === 'detail' ? '' : 'pointer-events-none'}`}>
+          <div className={`absolute top-5 right-5 z-20 ${focusCol === 'detail' ? '' : 'pointer-events-none'}`}>
             <DetailCard program={focusedProgram} now={now} focused={focusCol === 'detail'} cardRef={detailRef} />
           </div>
         ) : null}
