@@ -11,6 +11,7 @@ const MIN_TAR_BYTES = 20 * 1024 * 1024
 
 let pending = null
 let native = { api: null, model: null }
+let recCache = { grammarKey: '', grammarRec: null, dictRec: null, sampleRate: 0 }
 
 function sendProgress(payload) {
   const win = BrowserWindow.getAllWindows()[0]
@@ -170,12 +171,6 @@ async function ensureExtractedModel() {
     /* keep zip if locked */
   }
   if (!extractedReady()) throw new Error('Архив модели повреждён')
-  if (!tarReady()) {
-    const tmp = `${tarPath()}.part`
-    if (fs.existsSync(tmp)) fs.unlinkSync(tmp)
-    await runTar(['-czf', tmp, MODEL_DIR_NAME], voskRoot())
-    fs.renameSync(tmp, tarPath())
-  }
 }
 
 async function ensureNativeLib() {
@@ -197,6 +192,7 @@ async function ensureNativeLib() {
   if (!source) throw new Error('Не найден файл распознавания')
   fs.mkdirSync(libDir(), { recursive: true })
   for (const name of fs.readdirSync(source)) {
+    if (/\.(lib|a|exp|pdb)$/i.test(name)) continue
     const from = path.join(source, name)
     if (!fs.statSync(from).isFile()) continue
     fs.copyFileSync(from, path.join(libDir(), name))
@@ -222,9 +218,21 @@ function loadNative() {
     modelNew: lib.func('void *vosk_model_new(str path)'),
     modelFree: lib.func('void vosk_model_free(void *model)'),
     recNew: lib.func('void *vosk_recognizer_new(void *model, float sample_rate)'),
+    recNewGrm: null,
+    setMaxAlt: null,
     recAccept: lib.func('int vosk_recognizer_accept_waveform(void *rec, const void *data, int length)'),
     recFinal: lib.func('str vosk_recognizer_final_result(void *rec)'),
     recFree: lib.func('void vosk_recognizer_free(void *rec)'),
+  }
+  try {
+    api.recNewGrm = lib.func('void *vosk_recognizer_new_grm(void *model, float sample_rate, str grammar)')
+  } catch {
+    api.recNewGrm = null
+  }
+  try {
+    api.setMaxAlt = lib.func('void vosk_recognizer_set_max_alternatives(void *rec, int max_alternatives)')
+  } catch {
+    api.setMaxAlt = null
   }
   api.setLogLevel(-1)
   const model = api.modelNew(extractedDir())
@@ -244,34 +252,133 @@ function toPcmBuffer(raw) {
   return Buffer.from(raw)
 }
 
+function grammarJsonFrom(payload) {
+  const phrases = Array.isArray(payload?.phrases)
+    ? payload.phrases.map((item) => String(item || '').trim()).filter((item) => item.length >= 2 && item.length <= 80)
+    : []
+  if (!phrases.length) return ''
+  const unique = []
+  const seen = new Set()
+  for (const phrase of phrases.slice(0, 1200)) {
+    const key = phrase.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    unique.push(phrase)
+  }
+  if (!unique.some((item) => item === '[unk]')) unique.push('[unk]')
+  return JSON.stringify(unique)
+}
+
+function pickTranscript(raw) {
+  let parsed = {}
+  try {
+    parsed = JSON.parse(raw || '{}')
+  } catch {
+    parsed = {}
+  }
+  const alts = Array.isArray(parsed.alternatives) && parsed.alternatives.length
+    ? parsed.alternatives
+    : [{ text: parsed.text, confidence: 1 }]
+  for (const alt of alts) {
+    const text = String(alt?.text || '')
+      .replace(/\[unk\]/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    const conf = Number(alt?.confidence)
+    if (!text) continue
+    if (Number.isFinite(conf) && conf > 0 && conf < 0.12) continue
+    return text
+  }
+  return ''
+}
+
+function freeRec(engine, rec) {
+  if (!rec) return
+  try {
+    engine.api.recFree(rec)
+  } catch {
+    /* already gone */
+  }
+}
+
+function recognizerFor(engine, sampleRate, grammarJson) {
+  if (grammarJson && engine.api.recNewGrm) {
+    if (recCache.grammarRec && recCache.grammarKey === grammarJson && recCache.sampleRate === sampleRate) {
+      return recCache.grammarRec
+    }
+    freeRec(engine, recCache.grammarRec)
+    recCache.grammarRec = null
+    recCache.grammarKey = ''
+    let rec = null
+    try {
+      rec = engine.api.recNewGrm(engine.model, sampleRate, grammarJson)
+    } catch {
+      rec = null
+    }
+    if (rec) {
+      try {
+        engine.api.setMaxAlt?.(rec, 3)
+      } catch {
+        /* optional */
+      }
+      recCache.grammarRec = rec
+      recCache.grammarKey = grammarJson
+      recCache.sampleRate = sampleRate
+      return rec
+    }
+  }
+  if (recCache.dictRec && recCache.sampleRate === sampleRate) return recCache.dictRec
+  freeRec(engine, recCache.dictRec)
+  recCache.dictRec = engine.api.recNew(engine.model, sampleRate)
+  recCache.sampleRate = sampleRate
+  return recCache.dictRec
+}
+
+function runRecognizer(engine, rec, pcm) {
+  if (!rec) return ''
+  const chunk = 16000
+  for (let offset = 0; offset < pcm.length; offset += chunk) {
+    const slice = pcm.subarray(offset, Math.min(pcm.length, offset + chunk))
+    engine.api.recAccept(rec, slice, slice.length)
+  }
+  return pickTranscript(engine.api.recFinal(rec) || '{}')
+}
+
 function transcribePcm(payload = {}) {
   const pcm = toPcmBuffer(payload.pcm || payload)
   if (pcm.length < 3200) return { ok: false, error: 'NO_AUDIO' }
   const engine = loadNative()
   const sampleRate = Number(payload.sampleRate) || 16000
-  const rec = engine.api.recNew(engine.model, sampleRate)
-  if (!rec) return { ok: false, error: 'Не удалось запустить распознавание' }
+  const grammarJson = grammarJsonFrom(payload)
+  const grammarRec = recognizerFor(engine, sampleRate, grammarJson)
+  let text = runRecognizer(engine, grammarRec, pcm)
+  if (!text && grammarJson) text = runRecognizer(engine, recognizerFor(engine, sampleRate, ''), pcm)
+  if (!grammarRec && !text) return { ok: false, error: 'Не удалось запустить распознавание' }
+  return { ok: true, text }
+}
+
+function pruneVoskJunk() {
   try {
-    const chunk = 16000
-    for (let offset = 0; offset < pcm.length; offset += chunk) {
-      const slice = pcm.subarray(offset, Math.min(pcm.length, offset + chunk))
-      engine.api.recAccept(rec, slice, slice.length)
+    for (const name of fs.readdirSync(libDir())) {
+      if (!/\.(lib|a|exp|pdb)$/i.test(name)) continue
+      fs.unlinkSync(path.join(libDir(), name))
     }
-    const json = engine.api.recFinal(rec) || '{}'
-    let text = ''
-    try {
-      text = String(JSON.parse(json).text || '').trim()
-    } catch {
-      text = ''
-    }
-    return { ok: true, text }
-  } finally {
-    engine.api.recFree(rec)
+  } catch {
+    /* lib dir may be missing */
+  }
+  if (!extractedReady()) return
+  try {
+    if (fs.existsSync(tarPath())) fs.unlinkSync(tarPath())
+  } catch {
+    /* keep tar if locked */
   }
 }
 
 async function ensureVoskModel() {
-  if (native.model) return { ok: true, native: true, url: 'mirefir-vosk://model.tar.gz', fileUrl: tarReady() ? pathToFileURL(tarPath()).href : '' }
+  if (native.model) {
+    pruneVoskJunk()
+    return { ok: true, native: true, url: 'mirefir-vosk://model.tar.gz', fileUrl: tarReady() ? pathToFileURL(tarPath()).href : '' }
+  }
   if (pending) return pending
   pending = (async () => {
     try {
@@ -279,6 +386,7 @@ async function ensureVoskModel() {
       await ensureNativeLib()
       sendProgress({ phase: 'load', text: 'Загружаю голосовую модель…' })
       loadNative()
+      pruneVoskJunk()
       sendProgress({ phase: 'ready', text: '' })
       return {
         ok: true,

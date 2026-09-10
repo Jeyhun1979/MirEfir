@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSpeechSearch } from '../../hooks/useSpeechSearch.js'
-import { parseVoiceCommand, pickChannelByVoice, voicePhrasesForChannels } from '../../lib/channelMatch.js'
+import { channelsForVoice, parseVoiceCommand, pickChannelByVoice, voicePhrasesForChannels, voskGrammarPhrases } from '../../lib/channelMatch.js'
 import { arrowDir, isBackKey, isOkKey } from '../../lib/remoteKeys.js'
 import { usePlayer } from '../../store/PlayerContext.jsx'
 
@@ -17,8 +17,10 @@ export function SearchOverlay() {
     setListMode,
     voiceArmed,
     setVoiceArmed,
+    setVoiceDucked,
     settings,
     updateSettings,
+    favorites,
   } = usePlayer()
   const inputRef = useRef(null)
   const listRef = useRef(null)
@@ -29,7 +31,10 @@ export function SearchOverlay() {
   const [voiceNote, setVoiceNote] = useState('')
   const [permChoice, setPermChoice] = useState(0)
   const results = visibleChannels.slice(0, 40)
-  const phrases = useMemo(() => voicePhrasesForChannels(channels), [channels])
+  const phrases = useMemo(() => {
+    const ordered = channelsForVoice(channels, { favoriteIds: favorites })
+    return voskGrammarPhrases(voicePhrasesForChannels(ordered, 300), 960)
+  }, [channels, favorites])
   const phrasesRef = useRef(phrases)
   phrasesRef.current = phrases
 
@@ -42,7 +47,7 @@ export function SearchOverlay() {
       }
       const parsed = parseVoiceCommand(text, meta.grammar || meta.intent || '')
       const query = parsed.query || text
-      const hit = pickChannelByVoice(channels, query)
+      const hit = pickChannelByVoice(channels, query, favorites)
       setListMode('live')
       skipCursorReset.current = true
       setVoiceNote('')
@@ -62,7 +67,7 @@ export function SearchOverlay() {
       setVoicePickId(hit?.id || '')
       if (!hit) setCursor(-1)
     },
-    [channels, closeOverlays, selectChannel, setListMode, setSearchQuery],
+    [channels, closeOverlays, favorites, selectChannel, setListMode, setSearchQuery],
   )
 
   const speech = useSpeechSearch(onVoiceText, settings.language === 'en' ? 'en-US' : 'ru-RU', phrasesRef)
@@ -108,9 +113,13 @@ export function SearchOverlay() {
       setVoiceNote('Микрофон выключен в меню. Включите пункт «Микрофон».')
       return
     }
-    if (speech.listening) speech.stop()
-    else startVoice()
+    setVoiceNote('')
+    startVoice()
   }
+
+  useEffect(() => {
+    setVoiceDucked(Boolean(speech.listening))
+  }, [setVoiceDucked, speech.listening])
 
   useEffect(() => {
     if (uiScreen !== 'search' || !voiceArmed) return

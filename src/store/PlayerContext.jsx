@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { getCurrentProgram, getNextProgram } from '../lib/epg.js'
 import { collectGroups, loadPlaylistFromFile, loadPlaylistFromUrl, parseM3U } from '../lib/m3uParser.js'
-import { bindEpgToChannels, loadXmltv, mergeXmltv } from '../lib/xmltv.js'
+import { bindEpgToChannels, loadXmltv, mergeXmltv, slimXmltv } from '../lib/xmltv.js'
 import { decodeCloudCode, encodeCloudCode } from '../lib/cloudCode.js'
 import { buildCatchupUrl, catchupUrlCandidates, canPlayArchive, channelHasCatchup } from '../lib/catchup.js'
 import { quitApp } from '../lib/quitApp.js'
@@ -163,6 +163,7 @@ export function PlayerProvider({ children }) {
   const [error, setError] = useState('')
   const [volume, setVolume] = useState(readVolume)
   const [muted, setMuted] = useState(false)
+  const [voiceDucked, setVoiceDucked] = useState(false)
   const [volumeTick, setVolumeTick] = useState(0)
   const [settings, setSettingsState] = useState(loadSettings)
   const settingsRef = useRef(settings)
@@ -273,6 +274,7 @@ export function PlayerProvider({ children }) {
 
     if (xmltvRef.current) {
       const bound = bindEpgToChannels(parsed.channels, xmltvRef.current)
+      xmltvRef.current = slimXmltv(xmltvRef.current, bound.channels)
       setChannels(bound.channels)
       setEpg(bound.epg)
       const categoryCount = parsed.groups?.length || new Set(bound.channels.map((channel) => channel.group)).size
@@ -424,6 +426,7 @@ export function PlayerProvider({ children }) {
 
     setChannels((current) => {
       const bound = bindEpgToChannels(current, xmltv)
+      xmltvRef.current = slimXmltv(xmltv, bound.channels)
       setEpg(bound.epg)
       const categoryCount = new Set(bound.channels.map((channel) => channel.group)).size
       setStatus(`${bound.channels.length} каналов · ${categoryCount} категорий · EPG ${bound.matched}`)
@@ -1076,6 +1079,8 @@ export function PlayerProvider({ children }) {
     moveFavorite,
     volume,
     muted,
+    voiceDucked,
+    setVoiceDucked,
     volumeTick,
     nudgeVolume,
     toggleMute,

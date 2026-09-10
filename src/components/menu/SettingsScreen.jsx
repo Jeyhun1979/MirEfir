@@ -475,7 +475,7 @@ export function SettingsScreen() {
                 {settings.epgOffsetHours > 0 ? `+${settings.epgOffsetHours} ч` : `${settings.epgOffsetHours} ч`}
               </button>
             </Row>
-            <Row title="Хранить программу" hint="Сколько дней назад держать в гиде. Вперёд — всё, что есть в XMLTV">
+            <Row title="Хранить программу" hint="Сколько дней гида назад и вперёд от сегодня">
               <button type="button" className="rounded-lg bg-white/10 px-3 py-1 text-sm" onClick={() => cycle([1, 2, 3, 5, 7, 14], settings.epgDays, 'epgDays')}>
                 {settings.epgDays} дн.
               </button>

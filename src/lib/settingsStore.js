@@ -97,7 +97,7 @@ export function enabledEpgUrls(settings) {
 export function xmltvWindow(settings) {
   return {
     backDays: Math.max(Number(settings?.epgDays) || 7, Number(settings?.archiveDays) || 7, 7),
-    aheadDays: 16,
+    aheadDays: Math.max(Number(settings?.epgDays) || 7, 7),
   }
 }
 

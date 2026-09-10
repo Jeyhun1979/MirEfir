@@ -1,7 +1,7 @@
 {
   "name": "mirefir",
   "private": true,
-  "version": "1.0.13",
+  "version": "1.0.14",
   "author": "MirEfir",
   "description": "IPTV player for Windows, Linux and Android",
   "main": "electron/main.cjs",

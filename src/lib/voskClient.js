@@ -34,8 +34,10 @@ export function getVoskModel(url) {
   return cached.promise
 }
 
-export function createLiveRecognizer(model, sampleRate = 16000) {
-  const rec = new model.KaldiRecognizer(sampleRate)
+export function createLiveRecognizer(model, sampleRate = 16000, grammarJson = '') {
+  const rec = grammarJson
+    ? new model.KaldiRecognizer(sampleRate, grammarJson)
+    : new model.KaldiRecognizer(sampleRate)
   let best = ''
   rec.on('result', (message) => {
     const next = String(message?.result?.text || '').trim()

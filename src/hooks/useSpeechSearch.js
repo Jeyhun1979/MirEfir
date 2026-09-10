@@ -125,12 +125,20 @@ async function captureUtterance(stream, stillThis, onLevel) {
   return { voice, pcm: mergeFloat(parts) }
 }
 
-export function useSpeechSearch(onResult, lang = 'ru-RU') {
+function cleanHeard(text) {
+  return String(text || '')
+    .replace(/\[unk\]/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+export function useSpeechSearch(onResult, lang = 'ru-RU', phrasesRef) {
   const recRef = useRef(null)
   const streamRef = useRef(null)
   const heardRef = useRef('')
   const genRef = useRef(0)
   const onResultRef = useRef(onResult)
+  const phrasesNow = () => (Array.isArray(phrasesRef?.current) ? phrasesRef.current : [])
   onResultRef.current = onResult
   const [listening, setListening] = useState(false)
   const [status, setStatus] = useState('')
@@ -166,9 +174,10 @@ export function useSpeechSearch(onResult, lang = 'ru-RU') {
     const gen = genRef.current
     const emit = (text, extra) => onResultRef.current(text, extra)
     const stillThis = () => gen === genRef.current
+    setListening(true)
 
     const finishText = (text, extra = {}) => {
-      const next = String(text || '').trim()
+      const next = cleanHeard(text)
       if (!next) {
         setError('Не услышали. Скажите название канала или «переключи на …».')
         return
@@ -183,6 +192,12 @@ export function useSpeechSearch(onResult, lang = 'ru-RU') {
         if (!stillThis()) return
         if (info?.text) setStatus(info.text)
       })
+      let localStream = null
+      const dropStream = () => {
+        localStream?.getTracks().forEach((track) => track.stop())
+        if (streamRef.current === localStream) streamRef.current = null
+        localStream = null
+      }
       try {
         setStatus('Готовлю голосовую модель…')
         const ready = await window.mirefir.ensureVosk()
@@ -193,10 +208,13 @@ export function useSpeechSearch(onResult, lang = 'ru-RU') {
         }
 
         setStatus('Открываю микрофон…')
-        let stream
         try {
-          stream = await openMicrophone()
-          streamRef.current = stream
+          localStream = await openMicrophone()
+          if (!stillThis()) {
+            dropStream()
+            return
+          }
+          streamRef.current = localStream
         } catch (err) {
           if (!stillThis()) return
           if (isDenied(err)) {
@@ -209,8 +227,8 @@ export function useSpeechSearch(onResult, lang = 'ru-RU') {
         }
 
         setStatus('Слушаю…')
-        const { voice, pcm } = await captureUtterance(stream, stillThis)
-        releaseMic()
+        const { voice, pcm } = await captureUtterance(localStream, stillThis)
+        dropStream()
         if (!stillThis()) return
         if (voice.peak < 0.008) {
           setError('Микрофон молчит. Проверьте, какой микрофон выбран в Windows.')
@@ -218,12 +236,15 @@ export function useSpeechSearch(onResult, lang = 'ru-RU') {
         }
 
         setStatus('Распознаю…')
+        const phrases = phrasesNow()
+        const grammarJson = phrases.length ? JSON.stringify(phrases) : ''
         let text = ''
         if (typeof window.mirefir.transcribeSpeech === 'function' && ready.native !== false) {
           const samples = floatToInt16(pcm)
           const result = await window.mirefir.transcribeSpeech({
             pcm: samples.buffer.slice(samples.byteOffset, samples.byteOffset + samples.byteLength),
             sampleRate: 16000,
+            phrases,
           })
           if (!stillThis()) return
           if (!result?.ok && result?.error && result.error !== 'NO_AUDIO') {
@@ -233,17 +254,23 @@ export function useSpeechSearch(onResult, lang = 'ru-RU') {
         } else {
           const model = await getVoskModel(ready.fileUrl || ready.url || 'mirefir-vosk://model.tar.gz')
           if (!stillThis()) return
-          const rec = createLiveRecognizer(model, 16000)
-          rec.push(pcm)
-          text = await rec.finish()
+          try {
+            const rec = createLiveRecognizer(model, 16000, grammarJson)
+            rec.push(pcm)
+            text = await rec.finish()
+          } catch {
+            const rec = createLiveRecognizer(model, 16000)
+            rec.push(pcm)
+            text = await rec.finish()
+          }
         }
         if (!stillThis()) return
-        finishText(text, { grammar: 'dictation' })
+        finishText(text)
       } catch (err) {
         if (stillThis()) setError(err.message || 'Не удалось распознать голос.')
       } finally {
         offProgress?.()
-        releaseMic()
+        dropStream()
         if (stillThis()) {
           setListening(false)
           setStatus('')
@@ -255,6 +282,7 @@ export function useSpeechSearch(onResult, lang = 'ru-RU') {
     const Ctor = SpeechEngine()
     if (!Ctor) {
       setError('Голосовой поиск на этой платформе недоступен.')
+      setListening(false)
       return
     }
 
@@ -268,11 +296,13 @@ export function useSpeechSearch(onResult, lang = 'ru-RU') {
       } else {
         setError('Нужен доступ к микрофону.')
       }
+      setListening(false)
       return
     }
 
     if (!stillThis()) return
 
+    setListening(true)
     const rec = new Ctor()
     rec.lang = lang
     rec.interimResults = true
@@ -314,6 +344,7 @@ export function useSpeechSearch(onResult, lang = 'ru-RU') {
     } catch (err) {
       setError(err.message || 'Не удалось запустить распознавание.')
       releaseMic()
+      setListening(false)
     }
 
     window.setTimeout(() => {

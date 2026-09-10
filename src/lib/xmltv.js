@@ -1,6 +1,7 @@
 const DAY_MS = 24 * 60 * 60 * 1000
-const DEFAULT_BACK_DAYS = 14
-const DEFAULT_AHEAD_DAYS = 16
+const DEFAULT_BACK_DAYS = 7
+const DEFAULT_AHEAD_DAYS = 7
+const DESC_LIMIT = 1600
 
 export function parseXmltvTime(value) {
   const text = String(value || '').trim()
@@ -139,12 +140,14 @@ function ingestBlock(block, isChannel, channels, programs, from, to) {
   if (stop < from || start > to) return
 
   if (!programs[channelId]) programs[channelId] = []
+  let description = decodeXml(block.match(/<desc[^>]*>([^<]*)<\/desc>/i)?.[1] || '')
+  if (description.length > DESC_LIMIT) description = `${description.slice(0, DESC_LIMIT).replace(/\s+\S*$/, '')}…`
   programs[channelId].push({
     id: `${channelId}-${start}`,
     title: decodeXml(block.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1]) || 'Программа',
     start,
     end: stop,
-    description: decodeXml(block.match(/<desc[^>]*>([^<]*)<\/desc>/i)?.[1] || ''),
+    description,
   })
 }
 
@@ -254,6 +257,18 @@ export function bindEpgToChannels(playlistChannels, xmltv) {
   })
 
   return { channels, epg, matched }
+}
+
+export function slimXmltv(xmltv, playlistChannels) {
+  const keep = new Set()
+  for (const channel of playlistChannels || []) {
+    if (channel?.epgId) keep.add(channel.epgId)
+  }
+  const programs = {}
+  for (const id of keep) {
+    if (xmltv?.programs?.[id]) programs[id] = xmltv.programs[id]
+  }
+  return { channels: xmltv?.channels || {}, programs }
 }
 
 function preferHttps(url) {

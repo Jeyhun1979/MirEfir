@@ -23,6 +23,14 @@ function wrapIndex(index, length) {
   return (index + length) % length
 }
 
+function centerChild(container, child) {
+  if (!container || !child) return
+  const box = container.getBoundingClientRect()
+  const row = child.getBoundingClientRect()
+  const delta = row.top + row.height / 2 - (box.top + box.height / 2)
+  container.scrollTop = Math.max(0, container.scrollTop + delta)
+}
+
 function MarqueeText({ text, active }) {
   const wrapRef = useRef(null)
   const textRef = useRef(null)
@@ -74,10 +82,15 @@ function ArchiveMark({ visible }) {
   )
 }
 
-function DetailCard({ program, now }) {
+function DetailCard({ program, now, focused, cardRef }) {
   if (!program) {
     return (
-      <div className="w-[min(320px,28vw)] rounded-2xl bg-black/55 px-4 py-3 backdrop-blur-[2px]">
+      <div
+        ref={cardRef}
+        className={`scroll-thin max-h-[min(72vh,560px)] w-[min(340px,30vw)] overflow-y-auto rounded-2xl bg-black/55 px-4 py-3 backdrop-blur-[2px] ${
+          focused ? 'ring-2 ring-white' : ''
+        }`}
+      >
         <div className="text-[16px] text-white/70">Нет описания</div>
       </div>
     )
@@ -88,7 +101,12 @@ function DetailCard({ program, now }) {
   const live = program.start <= now.getTime() && now.getTime() < program.end
 
   return (
-    <div className="w-[min(320px,28vw)] rounded-2xl bg-black/55 px-4 py-3 backdrop-blur-[2px]">
+    <div
+      ref={cardRef}
+      className={`scroll-thin max-h-[min(72vh,560px)] w-[min(340px,30vw)] overflow-y-auto rounded-2xl bg-black/55 px-4 py-3 backdrop-blur-[2px] ${
+        focused ? 'ring-2 ring-white' : ''
+      }`}
+    >
       <div className="text-[18px] font-semibold leading-tight">{program.title}</div>
       <div className="mt-1.5 flex items-center gap-2 text-[12px] text-white/70">
         <span>{formatRange(program.start, program.end)}</span>
@@ -148,6 +166,7 @@ export function LiveGuideOverlay() {
   const channelRef = useRef(null)
   const programRef = useRef(null)
   const dayRef = useRef(null)
+  const detailRef = useRef(null)
   const openedRef = useRef(false)
   const okTimer = useRef(0)
   const okHeld = useRef(false)
@@ -248,11 +267,21 @@ export function LiveGuideOverlay() {
   }, [focusCol, selectedDay, todayStamp, visiblePrograms])
 
   useEffect(() => {
+    if (detailRef.current) detailRef.current.scrollTop = 0
+  }, [focusedProgram?.id])
+
+  useEffect(() => {
     if (!liveGuideView || !days.length) return
     const today = startOfDay(Date.now())
     const index = days.findIndex((day) => day === today)
     if (index >= 0) setDayCursor(index)
   }, [days.length, liveGuideView])
+
+  useEffect(() => {
+    if (!liveGuideView || !daysOpen) return
+    const el = dayRef.current?.querySelector(`[data-day="${dayCursor}"]`)
+    centerChild(dayRef.current, el)
+  }, [dayCursor, daysOpen, days.length, liveGuideView])
 
   useEffect(() => {
     const el = channelRef.current
@@ -271,22 +300,22 @@ export function LiveGuideOverlay() {
       prog.scrollIntoView({ block: 'nearest' })
       return
     }
-    alignLiveRef.current = false
-    const channel = channelRef.current?.querySelector(`[data-ch="${channelCursor}"]`)
-    const list = programRef.current
-    if (!channel || !list) {
-      prog.scrollIntoView({ block: 'start' })
-      return
-    }
-    const delta = prog.getBoundingClientRect().top - channel.getBoundingClientRect().top
-    list.scrollTop = Math.max(0, list.scrollTop + delta)
-  }, [channelCursor, focusedChannel?.id, liveGuideView, programCursor])
-
-  useEffect(() => {
-    const el = dayRef.current?.querySelector(`[data-day="${dayCursor}"]`)
-    if (!el || focusCol !== 'days') return
-    el.scrollIntoView({ block: 'nearest' })
-  }, [dayCursor, focusCol])
+    const frame = window.requestAnimationFrame(() => {
+      const node = programRef.current?.querySelector(`[data-prog="${programCursor}"]`)
+      const list = programRef.current
+      if (!node || !list) return
+      const dayEl = dayRef.current?.querySelector(`[data-day="${dayCursor}"]`)
+      alignLiveRef.current = false
+      if (dayEl) {
+        const dayMid = dayEl.getBoundingClientRect().top + dayEl.getBoundingClientRect().height / 2
+        const progMid = node.getBoundingClientRect().top + node.getBoundingClientRect().height / 2
+        list.scrollTop = Math.max(0, list.scrollTop + (progMid - dayMid))
+        return
+      }
+      centerChild(list, node)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [channelCursor, dayCursor, daysOpen, focusedChannel?.id, liveGuideView, programCursor])
 
   useEffect(() => {
     if (!liveGuideView) return undefined
@@ -350,11 +379,11 @@ export function LiveGuideOverlay() {
         runMenuItem(channel, items[channelMenu.cursor]?.id)
         return
       }
-      if (liveGuideView === 'schedule' && (focusCol === 'programs' || focusCol === 'days')) {
+      if (liveGuideView === 'schedule' && (focusCol === 'programs' || focusCol === 'days' || focusCol === 'detail')) {
         playFocused()
         return
       }
-      if (focusCol === 'programs' || focusCol === 'days') {
+      if (focusCol === 'programs' || focusCol === 'days' || focusCol === 'detail') {
         playFocused()
         return
       }
@@ -419,7 +448,7 @@ export function LiveGuideOverlay() {
       }
 
       if (isConfirmKey(event)) {
-        if (focusCol === 'programs' || focusCol === 'days') return
+        if (focusCol === 'programs' || focusCol === 'days' || focusCol === 'detail') return
         if (!event.repeat) startOkHold(focusedChannel)
         return
       }
@@ -438,6 +467,10 @@ export function LiveGuideOverlay() {
 
       if (liveGuideView === 'channels' || liveGuideView === 'schedule') {
         if (dir === 'left' || event.key === settings.keys?.liveGuide) {
+          if (focusCol === 'detail') {
+            setFocusCol(daysOpen && days.length ? 'days' : 'programs')
+            return
+          }
           if (focusCol === 'days') {
             setFocusCol('programs')
             setDaysOpen(false)
@@ -461,11 +494,19 @@ export function LiveGuideOverlay() {
           if (focusCol === 'programs' && days.length) {
             setDaysOpen(true)
             setFocusCol('days')
+            return
+          }
+          if (focusCol === 'days' || focusCol === 'programs') {
+            setFocusCol('detail')
           }
           return
         }
         if (dir === 'up' || dir === 'down') {
           const step = dir === 'down' ? 1 : -1
+          if (focusCol === 'detail') {
+            detailRef.current?.scrollBy({ top: step * 72, behavior: 'smooth' })
+            return
+          }
           if (focusCol === 'days') {
             alignLiveRef.current = false
             setDayCursor((current) => Math.min(days.length - 1, Math.max(0, current + step)))
@@ -747,8 +788,8 @@ export function LiveGuideOverlay() {
         ) : null}
 
         {liveGuideView === 'channels' || liveGuideView === 'schedule' ? (
-          <div className="pointer-events-none absolute top-5 right-5 z-10">
-            <DetailCard program={focusedProgram} now={now} />
+          <div className={`absolute top-5 right-5 z-10 ${focusCol === 'detail' ? '' : 'pointer-events-none'}`}>
+            <DetailCard program={focusedProgram} now={now} focused={focusCol === 'detail'} cardRef={detailRef} />
           </div>
         ) : null}
         {channelMenu ? (

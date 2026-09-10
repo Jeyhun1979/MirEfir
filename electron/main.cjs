@@ -78,6 +78,7 @@ if (installingNow) {
 }
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
+app.commandLine.appendSwitch('disk-cache-size', String(100 * 1024 * 1024))
 
 function forceQuit() {
   if (isApplyingUpdate()) {

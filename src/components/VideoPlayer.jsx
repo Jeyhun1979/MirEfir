@@ -37,6 +37,7 @@ export function VideoPlayer({ fullscreen = false }) {
     getNextProgram,
     volume,
     muted,
+    voiceDucked,
     volumeTick,
     uiScreen,
     settings,
@@ -187,9 +188,9 @@ export function VideoPlayer({ fullscreen = false }) {
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
-    video.volume = volume
-    video.muted = muted
-  }, [volume, muted])
+    video.volume = voiceDucked ? 0 : volume
+    video.muted = muted || voiceDucked
+  }, [volume, muted, voiceDucked])
 
   useEffect(() => {
     const onPad = () => {
