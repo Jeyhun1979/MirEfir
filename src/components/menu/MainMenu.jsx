@@ -9,6 +9,7 @@ const ITEMS = [
   { id: 'recordings', title: 'Записи', hint: 'DVR и расписание' },
   { id: 'multiview', title: 'Мультиэкран', hint: 'Несколько каналов сразу' },
   { id: 'search', title: 'Поиск', hint: 'Найти канал или голос' },
+  { id: 'microphone', title: 'Микрофон', hint: 'Голосовой поиск' },
   { id: 'playlists', title: 'Плейлисты', hint: 'M3U и Xtream' },
   { id: 'history', title: 'История', hint: 'Последние каналы' },
   { id: 'settings', title: 'Настройки', hint: 'Внешний вид, плеер, пульт' },
@@ -26,6 +27,8 @@ export function MainMenu() {
     goBack,
     exitPrompt,
     setExitPrompt,
+    settings,
+    updateSettings,
   } = usePlayer()
   const [cursor, setCursor] = useState(0)
   const itemRefs = useRef([])
@@ -103,6 +106,10 @@ export function MainMenu() {
       setUiScreen('search')
       return
     }
+    if (id === 'microphone') {
+      updateSettings({ voiceEnabled: !settings.voiceEnabled })
+      return
+    }
     if (id === 'settings') {
       openSettings('appearance')
       return
@@ -138,9 +145,15 @@ export function MainMenu() {
             >
               <span>
                 <span className="block text-[16px]">{item.title}</span>
-                <span className="block text-[12px] text-white/40">{item.hint}</span>
+                <span className="block text-[12px] text-white/40">
+                  {item.id === 'microphone'
+                    ? settings.voiceEnabled
+                      ? 'Включён — голос в поиске'
+                      : 'Выключен'
+                    : item.hint}
+                </span>
               </span>
-              <span className="text-white/25">›</span>
+              <span className="text-white/25">{item.id === 'microphone' ? (settings.voiceEnabled ? 'Вкл' : 'Выкл') : '›'}</span>
             </button>
           ))}
         </div>

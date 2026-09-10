@@ -159,7 +159,7 @@ export function parseM3U(text, sourceName = 'Плейлист') {
         pending.catchupType = pending.catchupType || playlistCatchup.type
       }
       if (!pending.catchupSource && playlistCatchup.source) pending.catchupSource = playlistCatchup.source
-      if (!pending.catchupDays && pending.catchup && playlistCatchup.days) pending.catchupDays = playlistCatchup.days
+      if (!pending.catchupDays && playlistCatchup.days) pending.catchupDays = playlistCatchup.days
       channels.push(pending)
       lastGroup = pending.group
       pending = null

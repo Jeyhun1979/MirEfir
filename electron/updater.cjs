@@ -103,6 +103,83 @@ function quote(value) {
   return `"${String(value).replace(/"/g, '')}"`
 }
 
+function installLockPath() {
+  return path.join(app.getPath('appData'), 'MirEfir', 'installing.lock')
+}
+
+function installInProgress() {
+  try {
+    const file = installLockPath()
+    if (!fs.existsSync(file)) return false
+    return Date.now() - fs.statSync(file).mtimeMs < 20 * 60 * 1000
+  } catch {
+    return false
+  }
+}
+
+function splashScriptPath() {
+  return path.join(app.getPath('temp'), 'mirefir-install.ps1')
+}
+
+function writeInstallSplash() {
+  const ps1 = splashScriptPath()
+  const script = [
+    'Add-Type -AssemblyName System.Windows.Forms',
+    'Add-Type -AssemblyName System.Drawing',
+    '$lock = $args[0]',
+    '$form = New-Object System.Windows.Forms.Form',
+    "$form.Text = 'MirEfir'",
+    "$form.FormBorderStyle = 'None'",
+    '$form.ControlBox = $false',
+    '$form.TopMost = $true',
+    "$form.StartPosition = 'CenterScreen'",
+    '$form.Size = New-Object System.Drawing.Size(440, 170)',
+    '$form.BackColor = [System.Drawing.Color]::FromArgb(12, 17, 26)',
+    '$label = New-Object System.Windows.Forms.Label',
+    "$label.Text = 'Установка'",
+    '$label.ForeColor = [System.Drawing.Color]::White',
+    "$label.Font = New-Object System.Drawing.Font('Segoe UI', 20, [System.Drawing.FontStyle]::Bold)",
+    '$label.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter',
+    '$label.Dock = [System.Windows.Forms.DockStyle]::Top',
+    '$label.Height = 72',
+    '$hint = New-Object System.Windows.Forms.Label',
+    "$hint.Text = 'Подождите, приложение откроется само'",
+    '$hint.ForeColor = [System.Drawing.Color]::FromArgb(170, 176, 188)',
+    "$hint.Font = New-Object System.Drawing.Font('Segoe UI', 10)",
+    '$hint.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter',
+    '$hint.Dock = [System.Windows.Forms.DockStyle]::Top',
+    '$hint.Height = 36',
+    '$bar = New-Object System.Windows.Forms.ProgressBar',
+    "$bar.Style = 'Marquee'",
+    '$bar.MarqueeAnimationSpeed = 25',
+    '$bar.Height = 18',
+    '$bar.Dock = [System.Windows.Forms.DockStyle]::Bottom',
+    '$form.Controls.Add($bar)',
+    '$form.Controls.Add($hint)',
+    '$form.Controls.Add($label)',
+    '$timer = New-Object System.Windows.Forms.Timer',
+    '$timer.Interval = 400',
+    '$timer.Add_Tick({ if (-not $lock -or -not (Test-Path -LiteralPath $lock)) { $form.Close() } })',
+    '$timer.Start()',
+    '[void]$form.ShowDialog()',
+  ].join('\r\n')
+  fs.writeFileSync(ps1, `\uFEFF${script}`, 'utf8')
+  return ps1
+}
+
+function spawnInstallSplash() {
+  if (process.platform !== 'win32') return
+  const lock = installLockPath()
+  fs.mkdirSync(path.dirname(lock), { recursive: true })
+  fs.writeFileSync(lock, String(Date.now()))
+  const ps1 = writeInstallSplash()
+  spawn(
+    'powershell.exe',
+    ['-NoProfile', '-STA', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', ps1, lock],
+    { detached: true, stdio: 'ignore', windowsHide: true },
+  ).unref()
+}
+
 function applyDownloadedFile(filePath) {
   if (!filePath || !fs.existsSync(filePath)) throw new Error('Файл обновления не найден')
   applying = true
@@ -112,6 +189,8 @@ function applyDownloadedFile(filePath) {
   const log = path.join(app.getPath('userData'), 'updater.log')
   const exe = process.execPath
   const setup = path.resolve(filePath)
+  const lock = installLockPath()
+  spawnInstallSplash()
 
   const lines = [
     '@echo off',
@@ -137,6 +216,8 @@ function applyDownloadedFile(filePath) {
     'ping 127.0.0.1 -n 2 >nul',
     `if exist ${quote(exe)} start "" ${quote(exe)}`,
     `echo relaunched>>${quote(log)}`,
+    'ping 127.0.0.1 -n 4 >nul',
+    `del /f /q ${quote(lock)} >nul 2>&1`,
     `del /f /q ${quote(setup)} >nul 2>&1`,
     `del /f /q ${quote(vbs)} >nul 2>&1`,
     'del /f /q "%~f0" >nul 2>&1',
@@ -201,4 +282,4 @@ function registerUpdateIpc() {
   ipcMain.handle('update:apply', () => applyUpdate())
 }
 
-module.exports = { registerUpdateIpc, isApplyingUpdate }
+module.exports = { registerUpdateIpc, isApplyingUpdate, installInProgress, spawnInstallSplash }

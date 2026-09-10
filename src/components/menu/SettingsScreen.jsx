@@ -505,6 +505,9 @@ export function SettingsScreen() {
             <Row title="Подтверждать выход" hint="Esc из меню не сразу закрывает">
               <Toggle value={settings.confirmExit} onChange={(value) => updateSettings({ confirmExit: value })} />
             </Row>
+            <Row title="Микрофон" hint="Голосовой поиск каналов">
+              <Toggle value={settings.voiceEnabled !== false} onChange={(value) => updateSettings({ voiceEnabled: value })} />
+            </Row>
             <Row title="Декодер">
               <button type="button" className="rounded-lg bg-white/10 px-3 py-1 text-sm" onClick={() => cycle(['auto', 'hardware', 'software'], settings.decoder, 'decoder')}>
                 {settings.decoder}
@@ -567,7 +570,7 @@ export function SettingsScreen() {
 
         {settingsTab === 'archive' ? (
           <div>
-            <Row title="Архив (catch-up)" hint="Каналы с tvg-rec из плейлиста">
+            <Row title="Архив (catch-up)" hint="Значок ↺ только у каналов с архивом в плейлисте">
               <Toggle value={settings.archiveEnabled} onChange={(value) => updateSettings({ archiveEnabled: value })} />
             </Row>
             <Row title="Глубина архива" hint="1, 3, 5, 7 или 14 дней">
@@ -585,8 +588,9 @@ export function SettingsScreen() {
               </div>
             </Row>
             <p className="mt-4 text-sm text-white/40">
-              Архив смотрится из телегида: выберите день слева от передач и нажмите OK на прошедшей программе.
-              Глубина ограничивает, сколько дней назад можно открыть запись.
+              Значок ↺ появляется только если у канала в плейлисте есть архив. В телегиде справа от передач —
+              колонка дней: выберите прошедший день и нажмите OK на программе. Если архива нет, будет сообщение
+              «Архив не доступен». Глубина ограничивает, сколько дней назад можно открыть запись.
             </p>
           </div>
         ) : null}

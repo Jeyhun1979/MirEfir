@@ -4,6 +4,7 @@ import { collectGroups, loadPlaylistFromFile, loadPlaylistFromUrl, parseM3U } fr
 import { bindEpgToChannels, loadXmltv, mergeXmltv } from '../lib/xmltv.js'
 import { decodeCloudCode, encodeCloudCode } from '../lib/cloudCode.js'
 import { buildCatchupUrl, catchupUrlCandidates, canPlayArchive, channelHasCatchup } from '../lib/catchup.js'
+import { quitApp } from '../lib/quitApp.js'
 import {
   applyBackup,
   buildBackup,
@@ -475,17 +476,17 @@ export function PlayerProvider({ children }) {
         return false
       }
       if (!settings.archiveEnabled) {
-        setError('Архив выключен в настройках')
+        setError('Архив не доступен')
         return false
       }
       if (catchupDeniedRef.current.has(channel.id) || !canPlayArchive(channel, program, now, settings.archiveDays)) {
-        setError('Архив для этого канала недоступен')
+        setError('Архив не доступен')
         return false
       }
       const urls = catchupUrlCandidates(channel, program.start, program.end)
       const url = urls[0] || buildCatchupUrl(channel, program.start, program.end)
       if (!url) {
-        setError('Не удалось собрать ссылку архива')
+        setError('Архив не доступен')
         return false
       }
       const originStart = options.originStart || program.start
@@ -669,11 +670,11 @@ export function PlayerProvider({ children }) {
   const backLock = useRef(0)
   const goBack = useCallback(() => {
     const now = Date.now()
-    if (now - backLock.current < 250) return 'skip'
+    if (!exitPrompt && now - backLock.current < 250) return 'skip'
     backLock.current = now
     if (exitPrompt) {
-      setExitPrompt(false)
-      return 'exit-prompt'
+      quitApp()
+      return 'exit'
     }
     if (movingFavoriteId) {
       if (favoriteMoveSnapshot.current) {
@@ -724,8 +725,8 @@ export function PlayerProvider({ children }) {
       return 'modal'
     }
     if (isFullscreen) {
-      setIsFullscreen(false)
-      return 'player'
+      setExitPrompt(true)
+      return 'exit-prompt'
     }
     setUiScreen('menu')
     return 'menu'

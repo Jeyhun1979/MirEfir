@@ -16,6 +16,7 @@ export const DEFAULT_SETTINGS = {
   autoplay: true,
   rememberVolume: true,
   confirmExit: true,
+  voiceEnabled: true,
   showChannelNumbers: true,
   showEpgProgress: true,
   showProgramDesc: true,

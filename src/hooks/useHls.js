@@ -149,10 +149,14 @@ export function useHls(videoRef, src, options = {}) {
 
       const looksLikeLiveEdge = (details) => {
         const frags = details?.fragments || []
+        const first = frags[0]
         const last = frags[frags.length - 1]
-        const lastMs = segmentTimeMs(last?.relurl || last?.url || '')
-        const pdt = Number(last?.programDateTime) || 0
-        const edgeMs = lastMs || pdt
+        const stamp = (frag) =>
+          segmentTimeMs(frag?.relurl || frag?.url || '') || Number(frag?.programDateTime) || 0
+        const firstMs = stamp(first)
+        const lastMs = stamp(last)
+        const edgeMs = lastMs || firstMs
+        if (archiveStartMs && firstMs && Math.abs(firstMs - archiveStartMs) > 180000) return true
         if (edgeMs) return Date.now() - edgeMs <= 45000
         if (/[?&](utc|lutc)=/i.test(current)) return false
         if (/timeshift_abs|timeshift_rel|\/timeshift\//i.test(current)) return false
@@ -160,7 +164,6 @@ export function useHls(videoRef, src, options = {}) {
       }
 
       const rejectLive = () => {
-        if (/[?&](utc|lutc)=/i.test(current)) return
         if (tryNext()) {
           hls.stopLoad()
           return

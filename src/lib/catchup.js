@@ -198,7 +198,7 @@ export function catchupUrlCandidates(channel, startMs, endMs) {
   const flussonic = type.includes('flussonic') || type.includes('fs') || indexPlaylist || /video\.m3u8/i.test(channel.url)
   const append = type.includes('append') || type.includes('shift') || type.includes('default') || flussonic || !type
 
-  if (indexPlaylist) add(appendUtc(channel.url, start, finish))
+  if (indexPlaylist) add(appendUtc(channel.url, start, Date.now() - 1500))
 
   const source = String(channel.catchupSource || '').trim()
   if (source) {
@@ -213,12 +213,12 @@ export function catchupUrlCandidates(channel, startMs, endMs) {
   }
 
   if (!indexPlaylist && (flussonic || append || source)) add(appendUtc(channel.url, start, finish))
-  if (flussonic) {
+  if (flussonic && !indexPlaylist) {
     add(flussonicTimeshift(channel.url, start, finish))
     add(flussonicAbs(channel.url, start))
     add(flussonicRel(channel.url, start))
   }
-  if (xtream || !source) {
+  if (!indexPlaylist && (xtream || !source)) {
     add(xtreamTimeshift(channel.url, start, finish, 'm3u8', false))
     add(xtreamTimeshift(channel.url, start, finish, 'm3u8', true))
     add(xtreamTimeshiftPhp(channel.url, start, finish, false))

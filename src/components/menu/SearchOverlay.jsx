@@ -18,6 +18,7 @@ export function SearchOverlay() {
     voiceArmed,
     setVoiceArmed,
     settings,
+    updateSettings,
   } = usePlayer()
   const inputRef = useRef(null)
   const listRef = useRef(null)
@@ -26,6 +27,7 @@ export function SearchOverlay() {
   const [rowFocus, setRowFocus] = useState('input')
   const [voicePickId, setVoicePickId] = useState('')
   const [voiceNote, setVoiceNote] = useState('')
+  const [permChoice, setPermChoice] = useState(0)
   const results = visibleChannels.slice(0, 40)
   const phrases = useMemo(() => voicePhrasesForChannels(channels), [channels])
   const phrasesRef = useRef(phrases)
@@ -96,10 +98,29 @@ export function SearchOverlay() {
 
   const startVoice = speech.start
   useEffect(() => {
+    if (uiScreen !== 'search' || !window.mirefir?.ensureVosk) return undefined
+    window.mirefir.ensureVosk().catch(() => {})
+    return undefined
+  }, [uiScreen])
+
+  const beginVoice = () => {
+    if (!settings.voiceEnabled) {
+      setVoiceNote('Микрофон выключен в меню. Включите пункт «Микрофон».')
+      return
+    }
+    if (speech.listening) speech.stop()
+    else startVoice()
+  }
+
+  useEffect(() => {
     if (uiScreen !== 'search' || !voiceArmed) return
     setVoiceArmed(false)
+    if (!settings.voiceEnabled) {
+      setVoiceNote('Микрофон выключен в меню. Включите пункт «Микрофон».')
+      return
+    }
     startVoice()
-  }, [setVoiceArmed, startVoice, uiScreen, voiceArmed])
+  }, [setVoiceArmed, settings.voiceEnabled, startVoice, uiScreen, voiceArmed])
 
   useEffect(() => {
     if (cursor < 0) return
@@ -131,6 +152,25 @@ export function SearchOverlay() {
 
   const onKeyDown = (event) => {
     const dir = arrowDir(event)
+    if (speech.needPermission) {
+      if (dir === 'left' || dir === 'right') {
+        event.preventDefault()
+        event.stopPropagation()
+        setPermChoice((current) => (current + (dir === 'right' ? 1 : -1) + 3) % 3)
+        return
+      }
+      if (isOkKey(event)) {
+        event.preventDefault()
+        event.stopPropagation()
+        if (permChoice === 0) startVoice()
+        else if (permChoice === 1) window.mirefir?.openMicSettings?.()
+        else {
+          updateSettings({ voiceEnabled: false })
+          speech.setNeedPermission(false)
+        }
+        return
+      }
+    }
     if (isBackKey(event)) {
       event.preventDefault()
       event.stopPropagation()
@@ -169,8 +209,7 @@ export function SearchOverlay() {
     if (isOkKey(event) && cursor < 0 && rowFocus === 'mic') {
       event.preventDefault()
       event.stopPropagation()
-      if (speech.listening) speech.stop()
-      else speech.start()
+      beginVoice()
       return
     }
     if (isOkKey(event) && cursor >= 0) {
@@ -204,12 +243,11 @@ export function SearchOverlay() {
           />
           <button
             type="button"
-            title={speech.supported ? 'Голосовой поиск' : 'Голос недоступен'}
-            disabled={!speech.supported}
+            title={!settings.voiceEnabled ? 'Микрофон выключен в меню' : speech.supported ? 'Голосовой поиск' : 'Голос недоступен'}
+            disabled={!speech.supported || !settings.voiceEnabled}
             onClick={() => {
               setRowFocus('mic')
-              if (speech.listening) speech.stop()
-              else speech.start()
+              beginVoice()
             }}
             className={`remote-hit flex h-12 w-12 items-center justify-center rounded-xl ${
               speech.listening ? 'bg-live' : cursor < 0 && rowFocus === 'mic' ? 'bg-accent' : 'bg-white/10 hover:bg-white/15'
@@ -227,6 +265,39 @@ export function SearchOverlay() {
         ) : null}
         {speech.error ? <div className="mb-3 text-xs text-red-300">{speech.error}</div> : null}
         {voiceNote ? <div className="mb-3 text-xs text-red-300">{voiceNote}</div> : null}
+        {speech.needPermission ? (
+          <div className="mb-4 rounded-2xl border border-white/15 bg-black/50 p-4">
+            <div className="text-sm font-medium">Нужен доступ к микрофону</div>
+            <p className="mt-1 text-xs text-white/50">
+              Разрешите микрофон для MirEfir в Windows. Подходят наушники, камера и встроенный микрофон — при смене устройства доступ запросится снова.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {[
+                { id: 'retry', label: 'Разрешить', run: () => startVoice() },
+                { id: 'win', label: 'Параметры Windows', run: () => window.mirefir?.openMicSettings?.() },
+                {
+                  id: 'off',
+                  label: 'Выключить микрофон',
+                  run: () => {
+                    updateSettings({ voiceEnabled: false })
+                    speech.setNeedPermission(false)
+                  },
+                },
+              ].map((action, index) => (
+                <button
+                  key={action.id}
+                  type="button"
+                  onClick={action.run}
+                  className={`remote-hit rounded-xl px-3 py-2 text-sm ${
+                    permChoice === index ? 'bg-accent text-white ring-2 ring-white' : 'bg-white/10'
+                  }`}
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
         <div ref={listRef} className="scroll-thin max-h-80 overflow-y-auto">
           {results.map((channel, index) => (
             <button

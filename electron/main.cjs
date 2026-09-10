@@ -2,9 +2,9 @@ const { app, BrowserWindow, ipcMain, dialog, session, shell, protocol } = requir
 const path = require('path')
 const fs = require('fs')
 const { pathToFileURL } = require('url')
-const { registerUpdateIpc, isApplyingUpdate } = require('./updater.cjs')
+const { registerUpdateIpc, isApplyingUpdate, installInProgress, spawnInstallSplash } = require('./updater.cjs')
 const { cancelWindowsSpeech } = require('./speech.cjs')
-const { ensureVoskModel, registerVoskProtocol } = require('./vosk.cjs')
+const { ensureVoskModel, registerVoskProtocol, transcribePcm } = require('./vosk.cjs')
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -58,11 +58,17 @@ function migrateLegacyProfile() {
   }
 }
 
-const gotLock = app.requestSingleInstanceLock()
-if (!gotLock) {
+const installingNow = process.platform === 'win32' && installInProgress()
+if (installingNow) spawnInstallSplash()
+
+const gotLock = installingNow ? false : app.requestSingleInstanceLock()
+if (installingNow) {
+  app.exit(0)
+} else if (!gotLock) {
   app.exit(0)
 } else {
   app.on('second-instance', () => {
+    if (installInProgress()) return
     const win = BrowserWindow.getAllWindows()[0]
     if (!win) return
     if (win.isMinimized()) win.restore()
@@ -119,8 +125,16 @@ app.whenReady().then(() => {
   if (!gotLock) return
   migrateLegacyProfile()
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(permission !== 'openExternal')
+    if (permission === 'openExternal') {
+      callback(false)
+      return
+    }
+    callback(true)
   })
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission !== 'openExternal')
+  if (typeof session.defaultSession.setDevicePermissionHandler === 'function') {
+    session.defaultSession.setDevicePermissionHandler(() => true)
+  }
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
     const headers = { ...details.requestHeaders }
     if (!headers['User-Agent'] && !headers['user-agent']) {
@@ -218,6 +232,12 @@ ipcMain.handle('shell:open-external', async (_event, href) => {
   }
 })
 
+ipcMain.handle('shell:mic-settings', async () => {
+  if (process.platform === 'win32') {
+    await shell.openExternal('ms-settings:privacy-microphone')
+  }
+})
+
 ipcMain.handle('app:quit', () => {
   forceQuit()
 })
@@ -243,7 +263,15 @@ ipcMain.handle('app:info', () => ({
 }))
 
 ipcMain.handle('speech:listen', async () => ({ ok: false, error: 'NO_VOSK' }))
-ipcMain.handle('speech:transcribe', async () => ({ ok: false, error: 'NO_VOSK' }))
+ipcMain.handle('speech:transcribe', async (_event, payload) => {
+  try {
+    const ready = await ensureVoskModel()
+    if (!ready?.ok) return { ok: false, error: ready?.error || 'NO_VOSK' }
+    return transcribePcm(payload)
+  } catch (err) {
+    return { ok: false, error: err.message || 'NO_VOSK' }
+  }
+})
 ipcMain.handle('speech:ensure-vosk', async () => ensureVoskModel())
 ipcMain.handle('speech:cancel', () => {
   cancelWindowsSpeech()

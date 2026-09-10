@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('mirefir', {
   platform: 'electron',
   openPlaylistFile: () => ipcRenderer.invoke('playlist:open-file'),
   openExternal: (href) => ipcRenderer.invoke('shell:open-external', href),
+  openMicSettings: () => ipcRenderer.invoke('shell:mic-settings'),
   pickFolder: () => ipcRenderer.invoke('storage:pick-folder'),
   internalFolder: () => ipcRenderer.invoke('storage:internal-folder'),
   storageSpace: (folder) => ipcRenderer.invoke('storage:space', folder),

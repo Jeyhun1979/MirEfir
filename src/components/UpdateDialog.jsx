@@ -196,8 +196,8 @@ export function UpdateDialog() {
 
         {phase === 'installing' ? (
           <>
-            <div className="text-xl font-semibold">Установка…</div>
-            <p className="mt-2 text-sm text-sky-300">Приложение закроется. Если не откроется само — запустите ярлык.</p>
+            <div className="text-xl font-semibold">Установка</div>
+            <p className="mt-2 text-sm text-sky-300">На экране останется окно «Установка», пока приложение не откроется снова.</p>
           </>
         ) : null}
 

@@ -1,4 +1,4 @@
-let modelPromise = null
+let cached = { url: '', promise: null }
 
 async function loadModel(url) {
   const mod = await import('vosk-browser')
@@ -24,39 +24,52 @@ async function loadModel(url) {
 }
 
 export function getVoskModel(url) {
-  if (!modelPromise) {
-    modelPromise = loadModel(url).catch((err) => {
-      modelPromise = null
-      throw err
-    })
-  }
-  return modelPromise
+  if (cached.promise && cached.url === url) return cached.promise
+  cached.url = url
+  cached.promise = loadModel(url).catch((err) => {
+    cached.promise = null
+    cached.url = ''
+    throw err
+  })
+  return cached.promise
 }
 
-export async function recognizePcm16(model, pcm, sampleRate = 16000) {
-  if (!model || !pcm?.length) return ''
+export function createLiveRecognizer(model, sampleRate = 16000) {
   const rec = new model.KaldiRecognizer(sampleRate)
-  const float = new Float32Array(pcm.length)
-  for (let i = 0; i < pcm.length; i += 1) float[i] = pcm[i] / 0x8000
-  return new Promise((resolve) => {
-    let best = ''
-    rec.on('result', (message) => {
-      const next = String(message?.result?.text || '').trim()
-      if (next) best = next
-    })
-    rec.on('partialresult', (message) => {
-      const next = String(message?.result?.partial || '').trim()
-      if (next) best = next
-    })
-    rec.acceptWaveformFloat(float, sampleRate)
-    rec.retrieveFinalResult()
-    window.setTimeout(() => {
-      try {
-        rec.remove()
-      } catch {
-        /* ignore */
-      }
-      resolve(best)
-    }, 700)
+  let best = ''
+  rec.on('result', (message) => {
+    const next = String(message?.result?.text || '').trim()
+    if (next) best = next
   })
+  rec.on('partialresult', (message) => {
+    const next = String(message?.result?.partial || '').trim()
+    if (next) best = next
+  })
+  return {
+    push(float32) {
+      if (float32?.length) rec.acceptWaveformFloat(float32, sampleRate)
+    },
+    text() {
+      return best
+    },
+    finish() {
+      return new Promise((resolve) => {
+        rec.retrieveFinalResult()
+        const started = Date.now()
+        const tick = () => {
+          if (best || Date.now() - started > 3500) {
+            try {
+              rec.remove()
+            } catch {
+              /* ignore */
+            }
+            resolve(best)
+            return
+          }
+          window.setTimeout(tick, 120)
+        }
+        window.setTimeout(tick, 250)
+      })
+    },
+  }
 }

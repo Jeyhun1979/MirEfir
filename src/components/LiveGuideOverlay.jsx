@@ -6,6 +6,7 @@ import {
   formatRange,
   formatRemaining,
   getProgramProgress,
+  programsOnDay,
   startOfDay,
 } from '../lib/epg.js'
 import { programHasArchive } from '../lib/catchup.js'
@@ -178,12 +179,7 @@ export function LiveGuideOverlay() {
     [allPrograms, focusedChannel?.catchupDays, settings.archiveDays, settings.archiveEnabled, settings.epgDays, todayStamp],
   )
   const selectedDay = days[dayCursor] || startOfDay(now.getTime())
-  const visiblePrograms = useMemo(() => {
-    if (!days.length) return allPrograms || []
-    const from = days[0]
-    const to = days[days.length - 1] + 24 * 60 * 60 * 1000
-    return (allPrograms || []).filter((item) => item.start < to && item.end > from)
-  }, [allPrograms, days])
+  const visiblePrograms = useMemo(() => programsOnDay(allPrograms, selectedDay), [allPrograms, selectedDay])
   const focusedProgram = visiblePrograms[programCursor] || getCurrentProgram(focusedChannel)
   const menuItems = (channel) => {
     if (!channel) return []
@@ -219,7 +215,7 @@ export function LiveGuideOverlay() {
       nextList.findIndex((channel) => channel.id === selectedChannel?.id),
     )
     setChannelCursor(index)
-    setDaysOpen(false)
+    setDaysOpen(Boolean(settings.archiveEnabled))
     setFocusCol(liveGuideView === 'groups' ? 'groups' : 'channels')
     alignLiveRef.current = true
     requestAnimationFrame(() => {
@@ -229,7 +225,7 @@ export function LiveGuideOverlay() {
       el.scrollTop = top
       setScrollTop(top)
     })
-  }, [channels, favorites, groups, liveGuideView, recentIds, selectedChannel?.id, selectedGroupId, settings.hiddenGroups])
+  }, [channels, favorites, groups, liveGuideView, recentIds, selectedChannel?.id, selectedGroupId, settings.archiveEnabled, settings.hiddenGroups])
 
   useEffect(() => {
     if (!visiblePrograms.length) {
