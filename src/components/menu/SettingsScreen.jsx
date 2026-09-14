@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { APP_VERSION } from '../../lib/appInfo.js'
 import { copyText, shareCloudCode } from '../../lib/cloudCode.js'
 import { eventToken, keyCaption, arrowDir, isBackKey, isOkKey, isTypingTarget } from '../../lib/remoteKeys.js'
-import { ARCHIVE_DAYS, CLOCK_POSITIONS, CLOCK_SIZES, DEFAULT_SETTINGS, KEY_LABELS, enabledEpgUrls, normalizeEpgSources, saveSettings } from '../../lib/settingsStore.js'
+import { ARCHIVE_DAYS, CLOCK_POSITIONS, CLOCK_SIZES, DEFAULT_SETTINGS, KEY_LABELS, enabledEpgUrls, epgSlots, normalizeEpgSources, saveSettings, writeEpgSlots } from '../../lib/settingsStore.js'
 import { pickStorageFolder } from '../../lib/storage.js'
 import { usePlayer } from '../../store/PlayerContext.jsx'
 
@@ -32,6 +32,14 @@ function Row({ title, hint, children }) {
   )
 }
 
+function ToggleMark({ value }) {
+  return (
+    <span className={`rounded-full px-3 py-1 text-xs ${value ? 'bg-accent' : 'bg-white/10 text-white/50'}`}>
+      {value ? 'Вкл' : 'Выкл'}
+    </span>
+  )
+}
+
 function Toggle({ value, onChange }) {
   return (
     <button
@@ -54,10 +62,9 @@ export function SettingsScreen() {
     settings,
     updateSettings,
     playlistUrl,
-    playlistGroups,
+    allPlaylistGroups,
     importFromUrl,
     importEpg,
-    upsertEpgSource,
     exportBackup,
     exportCloudCode,
     importCloudCode,
@@ -67,7 +74,6 @@ export function SettingsScreen() {
   } = usePlayer()
 
   const [playlistDraft, setPlaylistDraft] = useState('')
-  const [epgDraft, setEpgDraft] = useState('')
   const [xtream, setXtream] = useState({ server: '', user: '', pass: '' })
   const [pinDraft, setPinDraft] = useState('')
   const [pinUnlock, setPinUnlock] = useState('')
@@ -89,7 +95,6 @@ export function SettingsScreen() {
 
   useEffect(() => {
     setPlaylistDraft(playlistUrl || '')
-    setEpgDraft('')
   }, [playlistUrl, uiScreen])
 
   useEffect(() => {
@@ -108,7 +113,7 @@ export function SettingsScreen() {
       node.classList.toggle('setting-focus', pane === 'content' && index === itemIndex)
     })
     if (pane === 'content') nodes[itemIndex]?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-  }, [busy, itemIndex, pane, settings, settingsTab, playlistGroups, cloudCode, cloudNote, epgDraft, playlistDraft])
+  }, [busy, itemIndex, pane, settings, settingsTab, allPlaylistGroups, cloudCode, cloudNote, playlistDraft])
 
   useEffect(() => {
     if (uiScreen !== 'settings' || capturing) return undefined
@@ -352,9 +357,10 @@ export function SettingsScreen() {
             <Row title="User-Agent">
               <input className="w-56 rounded-lg border border-white/10 bg-black/30 px-2 py-1 text-xs" value={settings.userAgent} onChange={(e) => updateSettings({ userAgent: e.target.value })} />
             </Row>
-            <div className="mt-6 text-sm font-medium text-white/70">Скрыть группы</div>
+            <div className="mt-6 text-sm font-medium text-white/70">Папки каналов</div>
+            <div className="mt-1 text-[12px] text-white/35">Выключить — папка скрыта в телегиде и в списке папок телепрограммы</div>
             <div className="mt-2 max-h-48 overflow-y-auto rounded-xl border border-white/5 p-2">
-              {(playlistGroups || []).map((group) => {
+              {(allPlaylistGroups || []).map((group) => {
                 const hidden = (settings.hiddenGroups || []).includes(group.id)
                 return (
                   <button
@@ -369,7 +375,7 @@ export function SettingsScreen() {
                     }}
                   >
                     <span>{group.name}</span>
-                    <span className="text-xs text-white/35">{hidden ? 'скрыта' : 'видима'}</span>
+                    <ToggleMark value={!hidden} />
                   </button>
                 )
               })}
@@ -385,66 +391,50 @@ export function SettingsScreen() {
         {settingsTab === 'epg' ? (
           <div>
             <p className="mb-3 text-sm text-white/45">
-              Ссылок можно добавить сколько угодно. Одновременно грузятся максимум две (основная и дополнительная) — отметьте их галочкой.
+              Основной источник загружается всегда. Дополнительный — только если основной не отвечает.
             </p>
-            {normalizeEpgSources(settings).map((source) => {
-              const enabledCount = normalizeEpgSources(settings).filter((item) => item.enabled).length
+            {(() => {
+              const slots = epgSlots(settings)
+              const setSlot = (patch) => updateSettings(writeEpgSlots(settings, patch))
               return (
-                <div key={source.id} className="mb-2 flex items-start gap-3 rounded-xl border border-white/8 bg-black/25 px-3 py-2">
+                <>
+                  <label className="mb-1 block text-sm text-white/70">Основной источник</label>
                   <input
-                    type="checkbox"
-                    className="mt-1 h-4 w-4 accent-accent"
-                    checked={source.enabled}
-                    onChange={() => {
-                      if (!source.enabled && enabledCount >= 2) {
-                        setError('Можно включить максимум два источника')
-                        return
-                      }
-                      const next = normalizeEpgSources(settings).map((item) =>
-                        item.id === source.id ? { ...item, enabled: !item.enabled } : item,
-                      )
-                      updateSettings({
-                        epgSources: next,
-                        epgUrl: enabledEpgUrls({ ...settings, epgSources: next })[0] || '',
-                      })
-                    }}
+                    value={slots.primary.url}
+                    onChange={(event) => setSlot({ primaryUrl: event.target.value, fallbackUrl: slots.fallback.url })}
+                    placeholder="https://example.com/guide.xml.gz"
+                    className="mb-4 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-sm outline-none focus:border-accent"
                   />
-                  <div className="min-w-0 flex-1 break-all text-sm text-white/80">{source.url}</div>
-                  <button
-                    type="button"
-                    className="shrink-0 text-xs text-white/40"
-                    onClick={() => {
-                      const next = normalizeEpgSources(settings).filter((item) => item.id !== source.id)
-                      updateSettings({
-                        epgSources: next,
-                        epgUrl: enabledEpgUrls({ ...settings, epgSources: next })[0] || '',
-                      })
-                    }}
-                  >
-                    Удалить
-                  </button>
-                </div>
+                  <label className="mb-1 block text-sm text-white/70">Дополнительный источник</label>
+                  <p className="mb-1 text-[12px] text-white/35">Запасной. Если основной молчит — берём программу отсюда.</p>
+                  <input
+                    value={slots.fallback.url}
+                    onChange={(event) => setSlot({ primaryUrl: slots.primary.url, fallbackUrl: event.target.value })}
+                    placeholder="Необязательно"
+                    className="mb-4 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-sm outline-none focus:border-accent"
+                  />
+                  {slots.extras.map((source) => (
+                    <div key={source.id} className="mb-2 flex items-start gap-3 rounded-xl border border-white/8 bg-black/25 px-3 py-2">
+                      <div className="min-w-0 flex-1 break-all text-sm text-white/50">{source.url}</div>
+                      <button
+                        type="button"
+                        className="shrink-0 text-xs text-white/40"
+                        onClick={() => {
+                          const next = normalizeEpgSources(settings).filter((item) => item.id !== source.id)
+                          updateSettings({
+                            epgSources: next,
+                            epgUrl: enabledEpgUrls({ ...settings, epgSources: next })[0] || '',
+                          })
+                        }}
+                      >
+                        Удалить
+                      </button>
+                    </div>
+                  ))}
+                </>
               )
-            })}
-            <input
-              value={epgDraft}
-              onChange={(event) => setEpgDraft(event.target.value)}
-              placeholder="https://example.com/guide.xml.gz"
-              className="mb-2 mt-3 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-sm outline-none focus:border-accent"
-            />
+            })()}
             <div className="mb-6 flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="rounded-xl bg-white/10 px-4 py-2 text-sm"
-                onClick={() => {
-                  const url = epgDraft.trim()
-                  if (!url) return
-                  upsertEpgSource(url, normalizeEpgSources(settings).filter((item) => item.enabled).length < 2)
-                  setEpgDraft('')
-                }}
-              >
-                Добавить источник
-              </button>
               <button
                 type="button"
                 disabled={busy === 'epg'}
@@ -452,13 +442,9 @@ export function SettingsScreen() {
                   setBusy('epg')
                   setError('')
                   try {
-                    const extra = epgDraft.trim()
-                    if (extra) upsertEpgSource(extra, true)
-                    const urls = enabledEpgUrls(
-                      extra ? { ...settings, epgSources: [...normalizeEpgSources(settings), { id: 'tmp', url: extra, enabled: true }] } : settings,
-                    )
-                    await importEpg(urls.length ? [...new Set(urls)] : extra)
-                    setEpgDraft('')
+                    const urls = enabledEpgUrls(settings)
+                    if (!urls.length) throw new Error('Укажите основной источник телепрограммы')
+                    await importEpg(urls)
                   } catch (err) {
                     setError(err.message)
                   } finally {
@@ -475,15 +461,15 @@ export function SettingsScreen() {
                 {settings.epgOffsetHours > 0 ? `+${settings.epgOffsetHours} ч` : `${settings.epgOffsetHours} ч`}
               </button>
             </Row>
-            <Row title="Хранить программу" hint="Сколько дней гида назад и вперёд от сегодня">
+            <Row title="Хранить программу" hint="Сколько дней назад и вперёд держать в гиде. Старый файл заменяется новым">
               <button type="button" className="rounded-lg bg-white/10 px-3 py-1 text-sm" onClick={() => cycle([1, 2, 3, 5, 7, 14], settings.epgDays, 'epgDays')}>
                 {settings.epgDays} дн.
               </button>
             </Row>
-            <Row title="Автообновление EPG">
+            <Row title="Автообновление EPG" hint="Пока приложение открыто, программа сама обновляется">
               <Toggle value={settings.epgAutoUpdate} onChange={(value) => updateSettings({ epgAutoUpdate: value })} />
             </Row>
-            <Row title="Интервал обновления EPG">
+            <Row title="Интервал обновления EPG" hint="Через сколько часов скачать новую программу и заменить старую">
               <button type="button" className="rounded-lg bg-white/10 px-3 py-1 text-sm" onClick={() => cycle([3, 6, 12, 24], settings.epgUpdateHours, 'epgUpdateHours')}>
                 {settings.epgUpdateHours} ч
               </button>
@@ -674,7 +660,7 @@ export function SettingsScreen() {
               </div>
             </Row>
             <div className="mt-4 text-sm text-white/40">Заблокированные группы</div>
-            {(playlistGroups || []).map((group) => {
+            {(allPlaylistGroups || []).map((group) => {
               const locked = (settings.lockedGroups || []).includes(group.id)
               return (
                 <button

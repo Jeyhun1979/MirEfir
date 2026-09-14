@@ -1,10 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { getCurrentProgram, getNextProgram } from '../lib/epg.js'
 import { collectGroups, loadPlaylistFromFile, loadPlaylistFromUrl, parseM3U } from '../lib/m3uParser.js'
-import { bindEpgToChannels, loadXmltv, mergeXmltv, slimXmltv } from '../lib/xmltv.js'
+import { bindEpgToChannels, loadXmltv, slimXmltv } from '../lib/xmltv.js'
 import { decodeCloudCode, encodeCloudCode } from '../lib/cloudCode.js'
 import { buildCatchupUrl, catchupUrlCandidates, canPlayArchive, channelHasCatchup } from '../lib/catchup.js'
 import { quitApp } from '../lib/quitApp.js'
+import { epgCacheIsFresh, loadEpgCache, readEpgCacheMeta, saveEpgCache, uniqueEpgUrls } from '../lib/epgCache.js'
 import {
   applyBackup,
   buildBackup,
@@ -193,11 +194,19 @@ export function PlayerProvider({ children }) {
   const bootstrapped = useRef(false)
   const selectedIdRef = useRef('')
   const previousIdRef = useRef('')
+  const epgBusy = useRef(false)
+  const epgTimerRef = useRef(0)
+  const importEpgRef = useRef(async () => {})
+  const [bootScreen, setBootScreen] = useState(() => (typeof window !== 'undefined' && window.mirefir ? 'loading' : null))
+  const [osFullscreen, setOsFullscreen] = useState(false)
+  const [padOpen, setPadOpen] = useState(false)
+
+  const allPlaylistGroups = useMemo(() => collectGroups(channels), [channels])
 
   const playlistGroups = useMemo(() => {
     const hidden = settings.hiddenGroups || []
-    return collectGroups(channels).filter((group) => !hidden.includes(group.id))
-  }, [channels, settings.hiddenGroups])
+    return allPlaylistGroups.filter((group) => !hidden.includes(group.id))
+  }, [allPlaylistGroups, settings.hiddenGroups])
 
   const groups = useMemo(
     () => [
@@ -398,41 +407,48 @@ export function PlayerProvider({ children }) {
   }, [])
 
   const importEpg = useCallback(async (url) => {
-    const urls = (Array.isArray(url) ? url : [url]).map((item) => String(item || '').trim()).filter(Boolean)
+    const urls = uniqueEpgUrls(url)
     if (!urls.length) throw new Error('Укажите ссылку на XMLTV')
+    if (epgBusy.current) return
+    epgBusy.current = true
     setStatus('Загрузка EPG… это может занять минуту')
     const windowOpts = xmltvWindow(settingsRef.current)
-    const parts = []
-    const errors = []
-    for (const target of urls.slice(0, 2)) {
+    try {
+      let xmltv
+      let used = urls[0]
       try {
-        parts.push(await loadXmltv(target, windowOpts))
-        upsertEpgSource(target, true)
+        xmltv = await loadXmltv(urls[0], windowOpts)
       } catch (err) {
-        errors.push(err.message || String(err))
+        if (!urls[1]) throw err
+        setStatus('Основной источник не ответил, пробуем дополнительный…')
+        xmltv = await loadXmltv(urls[1], windowOpts)
+        used = urls[1]
       }
-    }
-    if (!parts.length) throw new Error(errors[0] || 'Не удалось загрузить телепрограмму')
-    const xmltv = mergeXmltv(parts)
-    xmltvRef.current = xmltv
-    localStorage.setItem(EPG_URL_KEY, urls[0])
-    setEpgUrl(urls[0])
-    setSettingsState((current) => {
-      const next = { ...current, epgUrl: urls[0], epgSources: normalizeEpgSources(current) }
-      saveSettings(next)
-      return next
-    })
-    queuePersistFile()
+      upsertEpgSource(used, true)
+      xmltvRef.current = xmltv
+      localStorage.setItem(EPG_URL_KEY, used)
+      setEpgUrl(used)
+      setSettingsState((current) => {
+        const next = { ...current, epgUrl: used, epgSources: normalizeEpgSources(current) }
+        saveSettings(next)
+        return next
+      })
+      queuePersistFile()
 
-    setChannels((current) => {
-      const bound = bindEpgToChannels(current, xmltv)
-      xmltvRef.current = slimXmltv(xmltv, bound.channels)
-      setEpg(bound.epg)
-      const categoryCount = new Set(bound.channels.map((channel) => channel.group)).size
-      setStatus(`${bound.channels.length} каналов · ${categoryCount} категорий · EPG ${bound.matched}`)
-      return bound.channels
-    })
-    if (errors.length) setError(`Часть источников не загрузилась: ${errors.join('; ')}`)
+      setChannels((current) => {
+        const bound = bindEpgToChannels(current, xmltv)
+        xmltvRef.current = slimXmltv(xmltv, bound.channels)
+        setEpg(bound.epg)
+        const categoryCount = new Set(bound.channels.map((channel) => channel.group)).size
+        setStatus(`${bound.channels.length} каналов · ${categoryCount} категорий · EPG ${bound.matched}`)
+        return bound.channels
+      })
+      window.setTimeout(() => {
+        saveEpgCache(xmltvRef.current, { url: used, ...windowOpts }).catch(() => {})
+      }, 0)
+    } finally {
+      epgBusy.current = false
+    }
   }, [upsertEpgSource])
 
   const selectGroup = useCallback(
@@ -727,13 +743,21 @@ export function PlayerProvider({ children }) {
       setIsModalOpen(false)
       return 'modal'
     }
+    if (padOpen) {
+      setPadOpen(false)
+      return 'pad'
+    }
+    if (osFullscreen && window.mirefir?.setFullscreen) {
+      window.mirefir.setFullscreen(false)
+      return 'os-fs'
+    }
     if (isFullscreen) {
       setExitPrompt(true)
       return 'exit-prompt'
     }
     setUiScreen('menu')
     return 'menu'
-  }, [exitPrompt, isFullscreen, isModalOpen, liveGuideView, menuResumeGuide, movingFavoriteId, channelMenu, uiScreen])
+  }, [exitPrompt, isFullscreen, isModalOpen, liveGuideView, menuResumeGuide, movingFavoriteId, channelMenu, osFullscreen, padOpen, uiScreen])
 
   const requestRecord = useCallback(() => {
     setRecordPulse((value) => value + 1)
@@ -930,9 +954,70 @@ export function PlayerProvider({ children }) {
   }, [channels, listMode, selectedChannelId, selectedGroupId])
 
   useEffect(() => {
+    if (!window.mirefir?.onFullscreen) return undefined
+    window.mirefir.isFullscreen?.().then((value) => setOsFullscreen(Boolean(value)))
+    return window.mirefir.onFullscreen?.((value) => setOsFullscreen(Boolean(value)))
+  }, [])
+
+  useEffect(() => {
+    if (!window.mirefir?.launchFlags) return undefined
+    window.mirefir.launchFlags().then((flags) => {
+      if (flags?.fromUpdate) setBootScreen('install')
+    })
+    return undefined
+  }, [])
+
+  useEffect(() => {
+    importEpgRef.current = importEpg
+  }, [importEpg])
+
+  useEffect(() => {
+    if (!settings.epgAutoUpdate) return undefined
+    let cancelled = false
+    const hours = Math.max(1, Number(settings.epgUpdateHours) || 6)
+    const maxAge = hours * 60 * 60 * 1000
+
+    const refresh = async () => {
+      const urls = enabledEpgUrls(settingsRef.current)
+      if (!urls.length || cancelled) return
+      try {
+        await importEpgRef.current(urls)
+      } catch {
+        /* keep last programme */
+      }
+    }
+
+    const schedule = async () => {
+      if (cancelled) return
+      const meta = await readEpgCacheMeta()
+      const wait = meta?.savedAt ? Math.max(20_000, maxAge - (Date.now() - meta.savedAt)) : maxAge
+      window.clearTimeout(epgTimerRef.current)
+      epgTimerRef.current = window.setTimeout(async () => {
+        await refresh()
+        if (!cancelled) schedule()
+      }, wait)
+    }
+
+    schedule()
+    return () => {
+      cancelled = true
+      window.clearTimeout(epgTimerRef.current)
+    }
+  }, [settings.epgAutoUpdate, settings.epgUpdateHours])
+
+  useEffect(() => {
     if (bootstrapped.current) return
     bootstrapped.current = true
     let cancelled = false
+    const shownAt = Date.now()
+
+    const finishBoot = () => {
+      const wait = Math.max(0, 1100 - (Date.now() - shownAt))
+      window.setTimeout(() => {
+        setBootScreen(null)
+        window.mirefir?.clearInstallLock?.()
+      }, wait)
+    }
 
     const start = async () => {
       await restorePersistFile()
@@ -952,8 +1037,13 @@ export function PlayerProvider({ children }) {
       if (!url && !savedText) {
         setStatus('Добавьте плейлист')
         setIsModalOpen(true)
+        finishBoot()
         return
       }
+
+      const [cachedXmltv, meta] = await Promise.all([loadEpgCache(), readEpgCacheMeta()])
+      if (cancelled) return
+      if (cachedXmltv) xmltvRef.current = cachedXmltv
 
       if (savedText) {
         try {
@@ -964,6 +1054,7 @@ export function PlayerProvider({ children }) {
       } else {
         setStatus('Загрузка плейлиста…')
       }
+      finishBoot()
 
       const refreshInBackground = async () => {
         try {
@@ -979,13 +1070,14 @@ export function PlayerProvider({ children }) {
           } else if (!savedText) {
             throw new Error('no playlist')
           }
-          const saved = loadSettings()
-          const guides = enabledEpgUrls(saved)
-          const guide = guides[0] || readEpgUrl() || saved.epgUrl
+          const latest = loadSettings()
+          const guides = enabledEpgUrls(latest)
+          const guide = guides[0] || readEpgUrl() || latest.epgUrl
           if (!guide && !guides.length) return
-          await new Promise((resolve) => window.setTimeout(resolve, 1800))
+          if (cachedXmltv && epgCacheIsFresh(meta, latest)) return
           if (cancelled) return
           importEpg(guides.length ? guides : guide).catch((err) => {
+            if (cachedXmltv) return
             setError(err.message || 'Не удалось загрузить телепрограмму. Её можно добавить позже.')
           })
         } catch {
@@ -1018,10 +1110,11 @@ export function PlayerProvider({ children }) {
     clearHistory,
     groups,
     playlistGroups,
+    allPlaylistGroups,
     visibleChannels,
     selectedGroupId,
     selectedChannel,
-    streamUrl: streamOverride?.url || selectedChannel?.url || '',
+    streamUrl: bootScreen ? '' : (streamOverride?.url || selectedChannel?.url || ''),
     playback: streamOverride,
     playProgram,
     failArchive,
@@ -1095,6 +1188,10 @@ export function PlayerProvider({ children }) {
     setLiveGuideOpen,
     setLiveGuideView,
     toggleLiveGuide,
+    bootScreen,
+    osFullscreen,
+    padOpen,
+    setPadOpen,
     voiceArmed,
     setVoiceArmed,
     requestVoiceSearch,

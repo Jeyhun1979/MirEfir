@@ -126,51 +126,10 @@ function clearInstallLock() {
   }
 }
 
-function writeInstallSplash() {
-  const hta = path.join(app.getPath('temp'), 'mirefir-install.hta')
-  const lock = installLockPath().replace(/\\/g, '\\\\').replace(/"/g, '')
-  const html = [
-    '<html>',
-    '<head>',
-    '<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">',
-    '<hta:application border="none" caption="no" sysmenu="no" showintaskbar="yes" innerborder="no" />',
-    '<title>MirEfir</title>',
-    '<style>',
-    'html,body{margin:0;overflow:hidden;background:#0c111a;color:#fff;font-family:Segoe UI,sans-serif;}',
-    '.wrap{height:170px;width:440px;display:flex;flex-direction:column;align-items:center;justify-content:center;}',
-    'h1{font-size:28px;margin:0 0 10px;font-weight:700;}',
-    'p{color:#aab0bc;margin:0 0 22px;font-size:14px;}',
-    '.bar{width:320px;height:8px;background:#1e2633;border-radius:99px;overflow:hidden;}',
-    '.bar i{display:block;height:100%;width:38%;background:#2f7cf6;animation:slide 1.15s linear infinite;}',
-    '@keyframes slide{from{margin-left:-40%;}to{margin-left:100%;}}',
-    '</style>',
-    '</head>',
-    '<body>',
-    '<div class="wrap"><h1>Установка</h1><p>Подождите, приложение откроется само</p><div class="bar"><i></i></div></div>',
-    '<script>',
-    'window.resizeTo(440,170);',
-    'window.moveTo((screen.width-440)/2,(screen.height-170)/2);',
-    `var lock="${lock}";`,
-    'setInterval(function(){try{var fso=new ActiveXObject("Scripting.FileSystemObject");if(!lock||!fso.FileExists(lock))window.close();}catch(e){}},400);',
-    'setTimeout(function(){window.close();},20*60*1000);',
-    '</script>',
-    '</body></html>',
-  ].join('\r\n')
-  fs.writeFileSync(hta, `\uFEFF${html}`, 'utf8')
-  return hta
-}
-
-function spawnInstallSplash() {
-  if (process.platform !== 'win32') return
+function markInstallPending() {
   const lock = installLockPath()
   fs.mkdirSync(path.dirname(lock), { recursive: true })
-  fs.writeFileSync(lock, String(Date.now()))
-  const hta = writeInstallSplash()
-  spawn('cmd.exe', ['/d', '/c', `start "" mshta.exe "${hta}"`], {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true,
-  }).unref()
+  fs.writeFileSync(lock, `updated ${Date.now()}`)
 }
 
 function applyDownloadedFile(filePath) {
@@ -182,8 +141,7 @@ function applyDownloadedFile(filePath) {
   const log = path.join(app.getPath('userData'), 'updater.log')
   const exe = process.execPath
   const setup = path.resolve(filePath)
-  const lock = installLockPath()
-  spawnInstallSplash()
+  markInstallPending()
 
   const lines = [
     '@echo off',
@@ -195,10 +153,8 @@ function applyDownloadedFile(filePath) {
     `echo running-setup>>${quote(log)}`,
     `start /wait "" ${quote(setup)} /S /NCRC --updated`,
     `echo setup-exit %ERRORLEVEL%>>${quote(log)}`,
-    `if exist ${quote(exe)} start "" ${quote(exe)}`,
+    `if exist ${quote(exe)} start "" ${quote(exe)} --updated`,
     `echo relaunched>>${quote(log)}`,
-    'ping 127.0.0.1 -n 8 >nul',
-    `del /f /q ${quote(lock)} >nul 2>&1`,
     `del /f /q ${quote(setup)} >nul 2>&1`,
     `del /f /q ${quote(vbs)} >nul 2>&1`,
     'del /f /q "%~f0" >nul 2>&1',
@@ -263,4 +219,4 @@ function registerUpdateIpc() {
   ipcMain.handle('update:apply', () => applyUpdate())
 }
 
-module.exports = { registerUpdateIpc, isApplyingUpdate, installInProgress, spawnInstallSplash, clearInstallLock }
+module.exports = { registerUpdateIpc, isApplyingUpdate, installInProgress, markInstallPending, clearInstallLock }

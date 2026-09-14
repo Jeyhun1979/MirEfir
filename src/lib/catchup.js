@@ -28,9 +28,9 @@ function dateParts(ms, utc = false) {
   }
 }
 
-function xtreamStamp(ms, utc = false) {
+function xtreamStamp(ms, utc = false, withSec = false) {
   const p = dateParts(ms, utc)
-  return `${p.Y}-${p.m}-${p.d}:${p.H}-${p.M}`
+  return withSec ? `${p.Y}-${p.m}-${p.d}:${p.H}-${p.M}-${p.S}` : `${p.Y}-${p.m}-${p.d}:${p.H}-${p.M}`
 }
 
 function fillTemplate(template, startMs, endMs) {
@@ -91,11 +91,11 @@ function parseXtream(url) {
   return null
 }
 
-function xtreamTimeshift(url, startMs, endMs, ext = 'm3u8', utc = false) {
+function xtreamTimeshift(url, startMs, endMs, ext = 'm3u8', utc = false, withSec = false) {
   const parsed = parseXtream(url)
   if (!parsed) return ''
   const duration = Math.max(1, Math.round((endMs - startMs) / 60000))
-  const stamp = xtreamStamp(startMs, utc)
+  const stamp = xtreamStamp(startMs, utc, withSec)
   return `${parsed.host}/timeshift/${parsed.user}/${parsed.pass}/${duration}/${stamp}/${parsed.id}.${ext}`
 }
 
@@ -171,7 +171,7 @@ export function programHasArchive(channel, program, now = Date.now(), maxDays = 
   if (program.end > now) return false
   const days = catchupWindowDays(channel, maxDays)
   if (!days) return false
-  return program.start >= now - days * 24 * 60 * 60 * 1000
+  return program.end >= now - days * 24 * 60 * 60 * 1000
 }
 
 export function canPlayArchive(channel, program, now = Date.now(), maxDays = 0) {
@@ -179,7 +179,7 @@ export function canPlayArchive(channel, program, now = Date.now(), maxDays = 0) 
   if (program.start >= now) return false
   const days = catchupWindowDays(channel, maxDays)
   if (!days) return false
-  return program.start >= now - days * 24 * 60 * 60 * 1000
+  return program.end >= now - days * 24 * 60 * 60 * 1000
 }
 
 export function catchupUrlCandidates(channel, startMs, endMs) {
@@ -219,12 +219,14 @@ export function catchupUrlCandidates(channel, startMs, endMs) {
     add(flussonicRel(channel.url, start))
   }
   if (!indexPlaylist && (xtream || !source)) {
+    add(xtreamTimeshiftUnix(channel.url, start, finish, 'm3u8'))
+    add(xtreamTimeshift(channel.url, start, finish, 'm3u8', false, true))
+    add(xtreamTimeshift(channel.url, start, finish, 'm3u8', true, true))
     add(xtreamTimeshift(channel.url, start, finish, 'm3u8', false))
     add(xtreamTimeshift(channel.url, start, finish, 'm3u8', true))
     add(xtreamTimeshiftPhp(channel.url, start, finish, false))
     add(xtreamTimeshiftPhp(channel.url, start, finish, true))
     add(xtreamTimeshift(channel.url, start, finish, 'ts', false))
-    add(xtreamTimeshiftUnix(channel.url, start, finish, 'm3u8'))
     add(xtreamTimeshiftUnix(channel.url, start, finish, 'ts'))
   }
 

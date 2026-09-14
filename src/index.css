@@ -155,3 +155,20 @@ textarea {
   background: #e81123;
   color: #fff;
 }
+
+.boot-bar i {
+  display: block;
+  height: 100%;
+  width: 38%;
+  background: #2f7cf6;
+  animation: boot-slide 1.15s linear infinite;
+}
+
+@keyframes boot-slide {
+  from {
+    margin-left: -40%;
+  }
+  to {
+    margin-left: 100%;
+  }
+}

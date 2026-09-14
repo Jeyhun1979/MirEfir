@@ -238,13 +238,6 @@ export function useKeyboardNav() {
       const insidePlayer = focusZone === 'player' || isFullscreen
       const dir = arrowDir(event)
 
-      if (isFullscreen && !liveGuideOpen && selectedChannel && dir === 'down' && !typing) {
-        event.preventDefault()
-        event.stopPropagation()
-        window.dispatchEvent(new Event('mirefir:pad-down'))
-        return
-      }
-
       if (selectedChannel && insidePlayer && !liveGuideOpen && (dir === 'left' || matchesBinding(event, keys.liveGuide))) {
         event.preventDefault()
         toggleLiveGuide()

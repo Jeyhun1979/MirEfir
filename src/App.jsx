@@ -5,6 +5,7 @@ import { StatusBar, Style } from '@capacitor/status-bar'
 import { ChannelList, ChannelActionMenu } from './components/ChannelList.jsx'
 import { EpgTimeline } from './components/EpgTimeline.jsx'
 import { PlaylistModal } from './components/PlaylistModal.jsx'
+import { BootOverlay } from './components/BootOverlay.jsx'
 import { UpdateDialog } from './components/UpdateDialog.jsx'
 import { MainMenu } from './components/menu/MainMenu.jsx'
 import { SearchOverlay } from './components/menu/SearchOverlay.jsx'
@@ -50,6 +51,7 @@ export default function App() {
         <WindowChrome />
         <PlaylistModal />
         <UpdateDialog />
+        <BootOverlay />
       </div>
     )
   }
@@ -59,7 +61,7 @@ export default function App() {
       <WindowChrome />
       {!isFullscreen ? <TopBar /> : null}
 
-      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1">
         {!isFullscreen ? <Sidebar /> : null}
         {!isFullscreen ? <ChannelList /> : null}
         <VideoPlayer fullscreen={isFullscreen} />
@@ -77,6 +79,7 @@ export default function App() {
       <RecordingsScreen />
       <HistoryScreen />
       <MultiViewScreen />
+      <BootOverlay />
     </div>
   )
 }

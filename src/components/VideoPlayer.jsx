@@ -9,6 +9,24 @@ import { arrowDir, isBackKey, isOkKey } from '../lib/remoteKeys.js'
 
 const PAD_MS = 6500
 const NUDGE_MS = 15000
+const PLAY_PAD_INDEX = 4
+
+function PlayIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-7 w-7 fill-current" aria-hidden>
+      <path d="M8 4.5v15l12-7.5z" />
+    </svg>
+  )
+}
+
+function PauseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-7 w-7 fill-current" aria-hidden>
+      <rect x="6" y="4.5" width="4.2" height="15" rx="1.2" />
+      <rect x="13.8" y="4.5" width="4.2" height="15" rx="1.2" />
+    </svg>
+  )
+}
 
 function formatHms(ms) {
   const sec = Math.max(0, Math.floor(Number(ms) / 1000) || 0)
@@ -27,7 +45,6 @@ export function VideoPlayer({ fullscreen = false }) {
     playback,
     playProgram,
     failArchive,
-    seekArchive,
     seekToMs,
     selectChannel,
     focusZone,
@@ -51,6 +68,9 @@ export function VideoPlayer({ fullscreen = false }) {
     openMenu,
     requestVoiceSearch,
     toggleLiveGuide,
+    osFullscreen,
+    padOpen,
+    setPadOpen,
   } = usePlayer()
   const program = getCurrentProgram(selectedChannel)
   const nextProgram = getNextProgram(selectedChannel)
@@ -73,7 +93,8 @@ export function VideoPlayer({ fullscreen = false }) {
   const [pipOn, setPipOn] = useState(false)
   const [padOn, setPadOn] = useState(false)
   const [padFocus, setPadFocus] = useState('none')
-  const [buttonCursor, setButtonCursor] = useState(0)
+  const [buttonCursor, setButtonCursor] = useState(PLAY_PAD_INDEX)
+  const [paused, setPaused] = useState(false)
   const [previewMs, setPreviewMs] = useState(null)
   const [seekHud, setSeekHud] = useState(null)
   const lastPulse = useRef(0)
@@ -102,12 +123,14 @@ export function VideoPlayer({ fullscreen = false }) {
 
   const showPad = () => {
     setPadOn(true)
+    setPadOpen(true)
     if (draggingRef.current) return
     window.clearTimeout(padTimer.current)
     padTimer.current = window.setTimeout(() => {
       setPadOn(false)
+      setPadOpen(false)
       setPadFocus('none')
-      setButtonCursor(0)
+      setButtonCursor(PLAY_PAD_INDEX)
       setPreviewMs(null)
     }, PAD_MS)
   }
@@ -193,26 +216,34 @@ export function VideoPlayer({ fullscreen = false }) {
   }, [volume, muted, voiceDucked])
 
   useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+    const sync = () => setPaused(Boolean(video.paused))
+    sync()
+    video.addEventListener('play', sync)
+    video.addEventListener('pause', sync)
+    video.addEventListener('emptied', sync)
+    return () => {
+      video.removeEventListener('play', sync)
+      video.removeEventListener('pause', sync)
+      video.removeEventListener('emptied', sync)
+    }
+  }, [streamUrl, selectedChannel?.id])
+
+  useEffect(() => {
     const onPad = () => {
-      setPadFocus('none')
+      setPadFocus('buttons')
+      setButtonCursor(PLAY_PAD_INDEX)
       showPad()
     }
     const onPadFocus = () => {
       setPadFocus('buttons')
-      setButtonCursor(0)
+      setButtonCursor(PLAY_PAD_INDEX)
       showPad()
     }
     const onPadDown = () => {
-      setPadOn(true)
       setPadFocus((prev) => (prev === 'buttons' ? 'bar' : 'buttons'))
-      setButtonCursor(0)
-      window.clearTimeout(padTimer.current)
-      padTimer.current = window.setTimeout(() => {
-        setPadOn(false)
-        setPadFocus('none')
-        setButtonCursor(0)
-        setPreviewMs(null)
-      }, PAD_MS)
+      showPad()
     }
     window.addEventListener('mirefir:pad', onPad)
     window.addEventListener('mirefir:pad-focus', onPadFocus)
@@ -222,7 +253,14 @@ export function VideoPlayer({ fullscreen = false }) {
       window.removeEventListener('mirefir:pad-focus', onPadFocus)
       window.removeEventListener('mirefir:pad-down', onPadDown)
     }
-  }, [])
+  }, [setPadOpen])
+
+  useEffect(() => {
+    if (padOpen) return
+    setPadOn(false)
+    setPadFocus('none')
+    setPreviewMs(null)
+  }, [padOpen])
 
   useEffect(() => {
     if (!padOn || liveGuideOpen || uiScreen) return undefined
@@ -232,16 +270,24 @@ export function VideoPlayer({ fullscreen = false }) {
         event.preventDefault()
         event.stopPropagation()
         setPadOn(false)
+        setPadOpen(false)
         setPadFocus('none')
         setPreviewMs(null)
         return
       }
-      if (padFocus === 'none') return
-      if (dir === 'up') {
+      if (dir === 'up' || dir === 'down') {
         event.preventDefault()
         event.stopPropagation()
-        setPadFocus(padFocus === 'bar' ? 'buttons' : 'none')
         showPad()
+        if (padFocus === 'none' || padFocus === 'buttons') {
+          if (dir === 'down') setPadFocus('bar')
+          else setPadFocus('buttons')
+          return
+        }
+        if (padFocus === 'bar') {
+          if (dir === 'up') setPadFocus('buttons')
+          return
+        }
         return
       }
       if (dir === 'left' || dir === 'right') {
@@ -255,6 +301,7 @@ export function VideoPlayer({ fullscreen = false }) {
           window.setTimeout(() => setPreviewMs(null), 400)
           return
         }
+        setPadFocus('buttons')
         setButtonCursor((current) => {
           const count = padActionsRef.current.length || 1
           return (current + (dir === 'right' ? 1 : -1) + count) % count
@@ -272,59 +319,73 @@ export function VideoPlayer({ fullscreen = false }) {
     return () => window.removeEventListener('keydown', onKey, true)
   }, [buttonCursor, displayMs, hasBounds, liveGuideOpen, padFocus, padOn, uiScreen])
 
-  useEffect(() => {
-    const seekInBuffer = (video, seconds) => {
-      const ranges = video.seekable
-      if (ranges.length) {
-        const start = ranges.start(0)
-        const end = ranges.end(ranges.length - 1)
-        const next = Math.min(end, Math.max(start, video.currentTime + seconds))
-        if (Math.abs(next - video.currentTime) < 0.2) return seconds > 0 ? 'live-edge' : 'start'
-        video.currentTime = next
-        return 'ok'
-      }
-      const duration = video.duration
-      if (Number.isFinite(duration) && duration > 0) {
-        video.currentTime = Math.min(duration, Math.max(0, video.currentTime + seconds))
-        return 'ok'
-      }
-      const guess = video.currentTime + seconds
-      if (guess >= 0) {
-        video.currentTime = guess
-        return 'ok'
-      }
-      return 'fail'
-    }
+  const seekStateRef = useRef({})
+  seekStateRef.current = {
+    archive,
+    actualMs,
+    boundsStart,
+    boundsEnd,
+    program,
+    selectedChannel,
+    playback,
+  }
 
+  useEffect(() => {
     const applySeek = (seconds) => {
       const video = videoRef.current
-      if (!video || !seconds) return
-      const archive = playback?.mode === 'archive'
-      const result = seekInBuffer(video, seconds)
-      if (result === 'ok') {
-        setSeekHud({ label: `${seconds > 0 ? '+' : '−'}${Math.abs(seconds)} сек`, at: Date.now() })
-        return
-      }
-      if (archive) {
-        seekArchive(seconds)
-        setSeekHud({ label: playback.title || 'Архив', at: Date.now() })
-        return
-      }
-      if (result === 'live-edge') {
+      const state = seekStateRef.current
+      if (!seconds || !state.selectedChannel) return
+      const archiveMode = Boolean(state.archive)
+
+      if (!archiveMode && seconds > 0) {
         setSeekHud({ label: 'Прямой эфир', at: Date.now() })
         return
       }
-      if (seconds < 0 && selectedChannel) {
-        const from = Date.now() + seconds * 1000
-        const ok = playProgram(selectedChannel, { start: from, end: from + 60 * 60 * 1000, title: 'Эфир со сдвигом' })
-        setSeekHud({ label: ok ? 'Архив эфира' : 'Перемотка недоступна', at: Date.now() })
+
+      if (video) {
+        const ranges = video.seekable
+        if (ranges.length) {
+          const start = ranges.start(0)
+          const end = ranges.end(ranges.length - 1)
+          const target = video.currentTime + seconds
+          if (target >= start - 0.05 && target <= end + 0.05) {
+            const next = Math.min(end, Math.max(start, target))
+            const moved = Math.abs(next - video.currentTime)
+            if (moved >= Math.max(0.4, Math.abs(seconds) * 0.45)) {
+              video.currentTime = next
+              setSeekHud({ label: `${seconds > 0 ? '+' : '−'}${Math.abs(seconds)} сек`, at: Date.now() })
+              return
+            }
+          }
+        }
       }
+
+      const from = (archiveMode ? state.actualMs : Date.now()) + seconds * 1000
+      const originStart = archiveMode ? state.boundsStart : state.program?.start || from
+      const originEnd = archiveMode ? state.boundsEnd : state.program?.end || Date.now()
+      const maxAt = archiveMode ? originEnd : Date.now() - 1000
+      const at = Math.min(maxAt, Math.max(originStart, from))
+      if (!archiveMode && Date.now() - at < 1200) {
+        setSeekHud({ label: 'Прямой эфир', at: Date.now() })
+        return
+      }
+      const ok = seekToMs(at, {
+        originStart,
+        originEnd,
+        start: originStart,
+        end: originEnd,
+        title: state.playback?.title || state.program?.title,
+      })
+      setSeekHud({
+        label: ok ? `${seconds > 0 ? '+' : '−'}${Math.abs(seconds)} сек` : 'Перемотка недоступна',
+        at: Date.now(),
+      })
     }
 
     const onSeek = (event) => applySeek(Number(event.detail?.seconds) || 0)
     window.addEventListener('mirefir:seek', onSeek)
     return () => window.removeEventListener('mirefir:seek', onSeek)
-  }, [playProgram, playback, seekArchive, selectedChannel])
+  }, [seekToMs])
 
   useEffect(() => {
     if (!seekHud) return undefined
@@ -402,15 +463,35 @@ export function VideoPlayer({ fullscreen = false }) {
     if (selectedChannel) selectChannel(selectedChannel.id)
   }
 
+  const togglePause = () => {
+    const video = videoRef.current
+    if (!video) return
+    showPad()
+    if (video.paused) video.play().catch(() => {})
+    else video.pause()
+  }
+
   const padItems = [
-    { id: 'back', label: '−30с', run: () => window.dispatchEvent(new CustomEvent('mirefir:seek', { detail: { seconds: -30 } })) },
-    { id: 'fwd', label: '+30с', run: () => window.dispatchEvent(new CustomEvent('mirefir:seek', { detail: { seconds: 30 } })) },
-    { id: 'live', label: 'Прямой эфир', run: goLive },
-    { id: 'guide', label: 'Гид', run: toggleLiveGuide },
-    { id: 'rec', label: recorder.active ? 'Стоп' : 'REC', run: toggleRecord },
-    { id: 'pip', label: 'PiP', run: togglePip },
-    { id: 'voice', label: 'Голос', run: requestVoiceSearch },
     { id: 'menu', label: 'Меню', run: openMenu },
+    { id: 'guide', label: 'Гид', run: toggleLiveGuide },
+    { id: 'voice', label: 'Голос', run: requestVoiceSearch },
+    { id: 'back', label: '−30с', run: () => window.dispatchEvent(new CustomEvent('mirefir:seek', { detail: { seconds: -30 } })) },
+    { id: 'pause', kind: 'play', run: togglePause },
+    {
+      id: 'fwd',
+      label: '+30с',
+      disabled: !archive,
+      run: () => {
+        if (!archive) {
+          setSeekHud({ label: 'Прямой эфир', at: Date.now() })
+          return
+        }
+        window.dispatchEvent(new CustomEvent('mirefir:seek', { detail: { seconds: 30 } }))
+      },
+    },
+    { id: 'live', label: 'Прямой эфир', run: goLive },
+    { id: 'pip', label: 'PiP', run: togglePip },
+    { id: 'rec', label: recorder.active ? 'Стоп' : 'Rec', run: toggleRecord },
   ]
   padActionsRef.current = padItems
   const elapsedLabel = hasBounds ? formatHms(displayMs - boundsStart) : '00:00:00'
@@ -420,7 +501,7 @@ export function VideoPlayer({ fullscreen = false }) {
     <section
       className={
         fullscreen
-          ? 'fixed inset-0 z-40 bg-black'
+          ? 'absolute inset-0 z-40 bg-black'
           : `relative flex min-w-[360px] flex-[1.15] flex-col bg-black ${focusZone === 'player' ? 'ring-1 ring-accent/50' : ''}`
       }
       onClick={() => {
@@ -484,17 +565,27 @@ export function VideoPlayer({ fullscreen = false }) {
 
       {liveGuideOpen || !padOn ? null : (
         <div
-          className={`absolute bottom-28 left-1/2 z-20 flex -translate-x-1/2 gap-2 rounded-2xl p-2 ${
+          className={`absolute bottom-28 left-1/2 z-20 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-1.5 overflow-x-auto rounded-2xl px-2 py-2 ${
             padFocus === 'buttons' ? 'bg-black/70 ring-1 ring-accent/80' : 'bg-black/55'
           }`}
         >
-          {padItems.map((item, index) => (
+          {padItems.map((item, index) => {
+            const focused = padFocus === 'buttons' && index === buttonCursor
+            const play = item.kind === 'play'
+            return (
             <button
               key={item.id}
               type="button"
-              className={`remote-hit min-w-[68px] rounded-xl px-2.5 text-sm font-medium ${
-                padFocus === 'buttons' && index === buttonCursor ? 'bg-accent' : 'bg-white/12 hover:bg-accent'
-              }`}
+              aria-label={play ? (paused ? 'Play' : 'Pause') : item.label}
+              className={
+                play
+                  ? `remote-hit flex h-14 w-14 items-center justify-center rounded-full bg-white text-black shadow-lg ${
+                      focused ? 'ring-2 ring-accent ring-offset-2 ring-offset-black' : ''
+                    }`
+                  : `remote-hit min-w-[58px] rounded-xl px-2 py-2 text-[13px] font-medium whitespace-nowrap ${
+                      item.disabled ? 'opacity-35' : focused ? 'bg-accent' : 'bg-white/12 hover:bg-accent'
+                    }`
+              }
               onMouseEnter={() => {
                 setPadFocus('buttons')
                 setButtonCursor(index)
@@ -510,6 +601,7 @@ export function VideoPlayer({ fullscreen = false }) {
                 event.preventDefault()
                 event.stopPropagation()
                 item.run()
+                if (item.disabled) return
                 const timer = window.setInterval(() => item.run(), 220)
                 const stop = () => {
                   window.clearInterval(timer)
@@ -520,13 +612,14 @@ export function VideoPlayer({ fullscreen = false }) {
                 window.addEventListener('pointercancel', stop)
               }}
             >
-              {item.label}
+              {play ? (paused ? <PlayIcon /> : <PauseIcon />) : item.label}
             </button>
-          ))}
+            )
+          })}
         </div>
       )}
 
-      {liveGuideOpen ? null : (
+      {liveGuideOpen || (osFullscreen && !padOn) ? null : (
       <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-4">
         <div className="text-sm text-white/90">
           {archive ? 'Архив · ' : ''}

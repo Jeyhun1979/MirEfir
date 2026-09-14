@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, session, shell, protocol } = requir
 const path = require('path')
 const fs = require('fs')
 const { pathToFileURL } = require('url')
-const { registerUpdateIpc, isApplyingUpdate, clearInstallLock } = require('./updater.cjs')
+const { registerUpdateIpc, isApplyingUpdate, clearInstallLock, installInProgress } = require('./updater.cjs')
 const { cancelWindowsSpeech } = require('./speech.cjs')
 const { ensureVoskModel, registerVoskProtocol, transcribePcm } = require('./vosk.cjs')
 
@@ -58,6 +58,25 @@ function migrateLegacyProfile() {
   }
 }
 
+const startedFromUpdate = process.argv.includes('--updated') || installInProgress()
+
+function focusWindow(win) {
+  if (!win || win.isDestroyed()) return
+  if (win.isMinimized()) win.restore()
+  win.show()
+  if (typeof win.moveTop === 'function') win.moveTop()
+  try {
+    win.setAlwaysOnTop(true, 'screen-saver')
+  } catch {
+    win.setAlwaysOnTop(true)
+  }
+  win.focus()
+  if (typeof app.focus === 'function') app.focus({ steal: true })
+  setTimeout(() => {
+    if (!win.isDestroyed()) win.setAlwaysOnTop(false)
+  }, 2500)
+}
+
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.exit(0)
@@ -65,10 +84,8 @@ if (!gotLock) {
   app.on('second-instance', () => {
     const win = BrowserWindow.getAllWindows()[0]
     if (!win) return
-    if (win.isMinimized()) win.restore()
     if (win.isFullScreen()) win.setFullScreen(true)
-    win.show()
-    win.focus()
+    focusWindow(win)
   })
 }
 
@@ -123,7 +140,8 @@ function createWindow() {
 
   win.setMenuBarVisibility(false)
   wireWindowIpc(win)
-  win.webContents.once('did-finish-load', () => clearInstallLock())
+  win.once('ready-to-show', () => focusWindow(win))
+  win.webContents.once('did-finish-load', () => focusWindow(win))
 
   win.on('closed', () => {
     if (process.platform !== 'darwin') forceQuit()
@@ -285,6 +303,48 @@ ipcMain.handle('window:close', (event) => {
   const win = fromSender(event)
   if (!win) return
   win.close()
+})
+
+ipcMain.handle('app:launch-flags', async () => ({ fromUpdate: startedFromUpdate }))
+
+ipcMain.handle('app:clear-install-lock', async () => {
+  clearInstallLock()
+  return true
+})
+
+function epgCachePath() {
+  return path.join(app.getPath('userData'), 'epg-cache.json.gz')
+}
+
+function epgMetaPath() {
+  return path.join(app.getPath('userData'), 'epg-cache-meta.json')
+}
+
+ipcMain.handle('epg:meta', async () => {
+  try {
+    return JSON.parse(fs.readFileSync(epgMetaPath(), 'utf8'))
+  } catch {
+    return null
+  }
+})
+
+ipcMain.handle('epg:load-cache', async () => {
+  try {
+    return fs.readFileSync(epgCachePath())
+  } catch {
+    return null
+  }
+})
+
+ipcMain.handle('epg:save-cache', async (_event, payload) => {
+  if (!payload?.bytes) return false
+  const buffer = Buffer.isBuffer(payload.bytes) ? payload.bytes : Buffer.from(payload.bytes)
+  fs.mkdirSync(app.getPath('userData'), { recursive: true })
+  const tmp = `${epgCachePath()}.tmp`
+  fs.writeFileSync(tmp, buffer)
+  fs.renameSync(tmp, epgCachePath())
+  fs.writeFileSync(epgMetaPath(), JSON.stringify(payload.meta || { savedAt: Date.now() }))
+  return true
 })
 
 ipcMain.handle('config:load', async () => {

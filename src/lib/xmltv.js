@@ -277,10 +277,12 @@ export function slimXmltv(xmltv, playlistChannels) {
     if (channel?.epgId) keep.add(channel.epgId)
   }
   const programs = {}
+  const channels = {}
   for (const id of keep) {
     if (xmltv?.programs?.[id]) programs[id] = xmltv.programs[id]
+    if (xmltv?.channels?.[id]) channels[id] = xmltv.channels[id]
   }
-  return { channels: xmltv?.channels || {}, programs }
+  return { channels, programs }
 }
 
 function preferHttps(url) {

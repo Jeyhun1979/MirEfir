@@ -21,7 +21,7 @@ export function ClockOverlay() {
   if (!settings.clockEnabled || liveGuideOpen) return null
 
   return (
-    <div className={`pointer-events-none absolute z-[45] font-medium tabular-nums text-white ${POS[settings.clockPosition] || POS['top-right']} ${SIZE[settings.clockSize] || SIZE.md}`}>
+    <div className={`pointer-events-none absolute z-[88] font-medium tabular-nums text-white ${POS[settings.clockPosition] || POS['top-right']} ${SIZE[settings.clockSize] || SIZE.md}`}>
       {formatClock(now)}
     </div>
   )

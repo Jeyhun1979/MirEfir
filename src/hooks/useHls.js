@@ -154,8 +154,9 @@ export function useHls(videoRef, src, options = {}) {
         const firstMs = stamp(first)
         const lastMs = stamp(last)
         const edgeMs = lastMs || firstMs
+        if (archiveStartMs && firstMs && Math.abs(firstMs - archiveStartMs) <= 180000) return false
         if (archiveStartMs && firstMs && Math.abs(firstMs - archiveStartMs) > 180000) return true
-        if (edgeMs) return Date.now() - edgeMs <= 45000
+        if (edgeMs) return Date.now() - edgeMs <= 12000
         if (/[?&](utc|lutc)=/i.test(current)) return false
         if (/timeshift_abs|timeshift_rel|\/timeshift\//i.test(current)) return false
         return false

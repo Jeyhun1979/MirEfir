@@ -73,6 +73,24 @@ function migrateLegacyStorage() {
   localStorage.setItem('mirefir.migrated', '1')
 }
 
+function unhideNewsGroupOnce() {
+  if (localStorage.getItem('mirefir.unhideNovosti')) return
+  const stored = localStorage.getItem(SETTINGS_KEY)
+  if (!stored) return
+  localStorage.setItem('mirefir.unhideNovosti', '1')
+  try {
+    const raw = JSON.parse(stored)
+    if (!raw || !Array.isArray(raw.hiddenGroups)) return
+    const next = raw.hiddenGroups.filter((id) => String(id).toLowerCase() !== 'новости')
+    if (next.length === raw.hiddenGroups.length) return
+    raw.hiddenGroups = next
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(raw))
+    queuePersistFile()
+  } catch {
+    /* ignore */
+  }
+}
+
 export function normalizeEpgSources(settings) {
   const list = Array.isArray(settings?.epgSources) ? settings.epgSources : []
   const cleaned = list
@@ -94,6 +112,34 @@ export function enabledEpgUrls(settings) {
     .map((item) => item.url)
 }
 
+export function epgSlots(settings) {
+  const enabled = normalizeEpgSources(settings).filter((item) => item.enabled)
+  const extras = normalizeEpgSources(settings).filter((item) => !item.enabled)
+  return {
+    primary: enabled[0] || { id: 'primary', url: '', enabled: true },
+    fallback: enabled[1] || { id: 'fallback', url: '', enabled: false },
+    extras,
+  }
+}
+
+export function writeEpgSlots(settings, { primaryUrl, fallbackUrl } = {}) {
+  const primary = String(primaryUrl ?? epgSlots(settings).primary.url).trim()
+  const fallback = String(fallbackUrl ?? epgSlots(settings).fallback.url).trim()
+  const extras = normalizeEpgSources(settings).filter((item) => {
+    if (!item.url || item.enabled) return false
+    return item.url !== primary && item.url !== fallback
+  })
+  const sources = []
+  if (primary) sources.push({ id: 'primary', url: primary, enabled: true })
+  if (fallback && fallback !== primary) sources.push({ id: 'fallback', url: fallback, enabled: true })
+  for (const item of extras) sources.push({ ...item, enabled: false })
+  return {
+    ...settings,
+    epgSources: sources,
+    epgUrl: primary || fallback || '',
+  }
+}
+
 export function xmltvWindow(settings) {
   return {
     backDays: Math.max(Number(settings?.epgDays) || 7, Number(settings?.archiveDays) || 7, 7),
@@ -104,6 +150,7 @@ export function xmltvWindow(settings) {
 export function loadSettings() {
   try {
     migrateLegacyStorage()
+    unhideNewsGroupOnce()
     const raw = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null')
     if (!raw || typeof raw !== 'object') return { ...DEFAULT_SETTINGS }
     const merged = {
