@@ -44,9 +44,4 @@
   Pop $0
   nsExec::ExecToLog '"$SYSDIR\netsh.exe" advfirewall firewall add rule name="MirEfir Out" dir=out action=allow program="$INSTDIR\MirEfir.exe" enable=yes profile=any'
   Pop $0
-  IfSilent mirefir_silent_launch
-  Goto mirefir_after_launch
-  mirefir_silent_launch:
-    ExecShell "" "$INSTDIR\MirEfir.exe" "--updated"
-  mirefir_after_launch:
 !macroend

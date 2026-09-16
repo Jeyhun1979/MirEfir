@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, session, shell, protocol } = requir
 const path = require('path')
 const fs = require('fs')
 const { pathToFileURL } = require('url')
-const { registerUpdateIpc, isApplyingUpdate, clearInstallLock, installInProgress } = require('./updater.cjs')
+const { registerUpdateIpc, isApplyingUpdate, clearInstallLock } = require('./updater.cjs')
 const { cancelWindowsSpeech } = require('./speech.cjs')
 const { ensureVoskModel, registerVoskProtocol, transcribePcm } = require('./vosk.cjs')
 
@@ -58,7 +58,7 @@ function migrateLegacyProfile() {
   }
 }
 
-const startedFromUpdate = process.argv.includes('--updated') || installInProgress()
+const startedFromUpdate = process.argv.includes('--updated')
 let focusResetTimer = 0
 
 function activateOnWindows() {

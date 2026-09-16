@@ -141,8 +141,7 @@ function applyDownloadedFile(filePath) {
   const log = path.join(app.getPath('userData'), 'updater.log')
   const exe = process.execPath
   const setup = path.resolve(filePath)
-  const psExe = exe.replace(/'/g, "''")
-  const psDir = path.dirname(exe).replace(/'/g, "''")
+  const dir = path.dirname(exe)
   markInstallPending()
 
   const lines = [
@@ -155,16 +154,18 @@ function applyDownloadedFile(filePath) {
     `echo running-setup>>${quote(log)}`,
     `start /wait "" ${quote(setup)} /S /NCRC`,
     `echo setup-exit %ERRORLEVEL%>>${quote(log)}`,
+    `"%SystemRoot%\\System32\\taskkill.exe" /F /IM MirEfir.exe /T >>${quote(log)} 2>&1`,
     'ping 127.0.0.1 -n 3 >nul',
     'set TRY=0',
     ':retry',
     'set /a TRY+=1',
-    `"%SystemRoot%\\System32\\tasklist.exe" /FI "IMAGENAME eq MirEfir.exe" | "%SystemRoot%\\System32\\find.exe" /I "MirEfir.exe" >nul`,
-    'if not errorlevel 1 goto running',
     'if %TRY% GTR 6 goto failed',
     `echo launch-try %TRY%>>${quote(log)}`,
-    `powershell.exe -NoProfile -WindowStyle Hidden -Command "Start-Process -FilePath '${psExe}' -WorkingDirectory '${psDir}' -ArgumentList '--updated' -WindowStyle Normal"`,
-    'ping 127.0.0.1 -n 3 >nul',
+    `start "" /D ${quote(dir)} ${quote(exe)} --updated`,
+    'ping 127.0.0.1 -n 6 >nul',
+    `"%SystemRoot%\\System32\\tasklist.exe" /FI "IMAGENAME eq MirEfir.exe" | "%SystemRoot%\\System32\\find.exe" /I "MirEfir.exe" >nul`,
+    'if not errorlevel 1 goto running',
+    `echo launch-died %TRY%>>${quote(log)}`,
     'goto retry',
     ':failed',
     `echo launch-failed>>${quote(log)}`,
@@ -172,7 +173,7 @@ function applyDownloadedFile(filePath) {
     ':running',
     `echo relaunched try=%TRY%>>${quote(log)}`,
     'ping 127.0.0.1 -n 2 >nul',
-    'powershell.exe -NoProfile -WindowStyle Hidden -Command "try { (New-Object -ComObject WScript.Shell).AppActivate(\'MirEfir\') | Out-Null } catch {}"',
+    `powershell.exe -NoProfile -WindowStyle Hidden -Command "try { (New-Object -ComObject WScript.Shell).AppActivate('MirEfir') | Out-Null } catch {}"`,
     ':cleanup',
     `del /f /q ${quote(setup)} >nul 2>&1`,
     `del /f /q ${quote(vbs)} >nul 2>&1`,
