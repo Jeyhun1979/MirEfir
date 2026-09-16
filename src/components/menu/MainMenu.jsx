@@ -23,7 +23,6 @@ export function MainMenu() {
     openSettings,
     setListMode,
     setUiScreen,
-    setSelectedGroupId,
     goBack,
     exitPrompt,
     setExitPrompt,
@@ -78,7 +77,6 @@ export function MainMenu() {
   const run = (id) => {
     if (id === 'live') {
       setListMode('live')
-      setSelectedGroupId('all')
       closeOverlays()
       return
     }

@@ -24,7 +24,8 @@ function createEngine(compact = false, bufferSec = 15, vod = false) {
     maxMaxBufferLength: compact ? 12 : vod ? Math.min(60, live + 30) : Math.min(30, live + 10),
     capLevelToPlayerSize: compact,
     startLevel: compact ? 0 : -1,
-    liveSyncDurationCount: vod ? 1 : 3,
+    liveSyncDurationCount: 1,
+    liveMaxLatencyDurationCount: vod ? 3 : 6,
     startPosition: vod ? 0 : -1,
     startFragPrefetch: true,
     testBandwidth: false,
@@ -77,7 +78,7 @@ export function useHls(videoRef, src, options = {}) {
     if (!video) return undefined
 
     const onWaiting = () => {
-      if (video.readyState >= 2 && video.currentTime > 0.3) return
+      if (video.currentTime < 0.3) return
       setLoading(true)
     }
     const onReady = () => {
@@ -167,6 +168,14 @@ export function useHls(videoRef, src, options = {}) {
       }
 
       let netFails = 0
+      let shown = false
+      const firstPicture = () => {
+        if (shown || id !== requestId.current) return
+        shown = true
+        setLoading(false)
+        setError('')
+        play()
+      }
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         netFails = 0
         if (requireVod) {
@@ -179,6 +188,10 @@ export function useHls(videoRef, src, options = {}) {
         }
         play()
       })
+      if (!requireVod && !compact) {
+        hls.on(Hls.Events.FRAG_BUFFERED, firstPicture)
+        hls.on(Hls.Events.FRAG_CHANGED, firstPicture)
+      }
 
       const checkLive = (details) => {
         if (!requireVod || id !== requestId.current || !hlsRef.current) return
