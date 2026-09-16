@@ -34,15 +34,6 @@ function createEngine(compact = false, bufferSec = 15, vod = false) {
   })
 }
 
-function errorMessage(data) {
-  const code = data?.response?.code
-  if (code === 404 || code === 410) return 'Поток недоступен. Архив на этом канале мог быть недоступен.'
-  if (code && code !== 200) return `Ошибка потока (${code}).`
-  if (data?.type === Hls.ErrorTypes.NETWORK_ERROR) return 'Сеть не отдаёт поток. Проверьте URL или CORS.'
-  if (data?.type === Hls.ErrorTypes.MEDIA_ERROR) return 'Не удалось декодировать поток.'
-  return 'Не удалось запустить архив. Попробуйте другую передачу или канал.'
-}
-
 function destroyEngine(hlsRef) {
   if (!hlsRef.current) return
   hlsRef.current.stopLoad()
@@ -89,7 +80,10 @@ export function useHls(videoRef, src, options = {}) {
       if (video.readyState >= 2 && video.currentTime > 0.3) return
       setLoading(true)
     }
-    const onReady = () => setLoading(false)
+    const onReady = () => {
+      setLoading(false)
+      setError('')
+    }
 
     video.addEventListener('waiting', onWaiting)
     video.addEventListener('stalled', onWaiting)
@@ -168,7 +162,7 @@ export function useHls(videoRef, src, options = {}) {
           return
         }
         setLoading(false)
-        setError('Сервер отдал прямой эфир вместо архива.')
+        setError('')
         onUnavailableRef.current?.()
       }
 
@@ -208,7 +202,7 @@ export function useHls(videoRef, src, options = {}) {
         if (status === 404 || status === 410) {
           hls.stopLoad()
           setLoading(false)
-          setError(errorMessage(data))
+          if (requireVod) onUnavailableRef.current?.()
           return
         }
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
@@ -216,7 +210,8 @@ export function useHls(videoRef, src, options = {}) {
           if (netFails > 2) {
             hls.stopLoad()
             setLoading(false)
-            setError(errorMessage(data))
+            if (requireVod) onUnavailableRef.current?.()
+            else hls.startLoad()
             return
           }
           hls.startLoad()
@@ -228,7 +223,7 @@ export function useHls(videoRef, src, options = {}) {
         }
         hls.stopLoad()
         setLoading(false)
-        setError(errorMessage(data))
+        if (requireVod) onUnavailableRef.current?.()
       })
 
       setError('')
@@ -237,10 +232,14 @@ export function useHls(videoRef, src, options = {}) {
       play()
       const watchdog = window.setTimeout(() => {
         if (id !== requestId.current) return
-        if (video.readyState < 2 && !tryNext()) {
+        if (video.readyState >= 2 || video.currentTime > 0.2) {
           setLoading(false)
-          setError((prev) => prev || 'Поток не запустился. Архив или сдвиг могли быть недоступны.')
+          setError('')
+          return
         }
+        if (tryNext()) return
+        setLoading(false)
+        if (requireVod) onUnavailableRef.current?.()
       }, 12000)
       return () => {
         window.clearTimeout(watchdog)
@@ -252,7 +251,7 @@ export function useHls(videoRef, src, options = {}) {
       if (id !== requestId.current) return
       if (tryNext()) return
       setLoading(false)
-      setError('Браузер не смог открыть этот поток.')
+      if (requireVod) onUnavailableRef.current?.()
     }
 
     video.src = current
@@ -264,5 +263,5 @@ export function useHls(videoRef, src, options = {}) {
     }
   }, [archiveStartMs, bufferSec, compact, current, expectedSec, requireVod, videoRef])
 
-  return { error, loading }
+  return { error, loading, clearError: () => setError('') }
 }

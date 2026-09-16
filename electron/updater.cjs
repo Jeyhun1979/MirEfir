@@ -155,6 +155,8 @@ function applyDownloadedFile(filePath) {
     `echo setup-exit %ERRORLEVEL%>>${quote(log)}`,
     `if exist ${quote(exe)} start "" ${quote(exe)} --updated`,
     `echo relaunched>>${quote(log)}`,
+    'ping 127.0.0.1 -n 4 >nul',
+    'powershell.exe -NoProfile -WindowStyle Hidden -Command "try { (New-Object -ComObject WScript.Shell).AppActivate(\'MirEfir\') | Out-Null } catch {}"',
     `del /f /q ${quote(setup)} >nul 2>&1`,
     `del /f /q ${quote(vbs)} >nul 2>&1`,
     'del /f /q "%~f0" >nul 2>&1',

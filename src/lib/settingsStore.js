@@ -246,12 +246,18 @@ export function applyBackup(data) {
       }),
     )
   }
-  if (data.favorites) localStorage.setItem('mirefir.favorites', JSON.stringify(data.favorites))
+  if (Array.isArray(data.favorites)) localStorage.setItem('mirefir.favorites', JSON.stringify(data.favorites))
   if (data.volume != null) localStorage.setItem('mirefir.volume', String(data.volume))
   if (data.muted != null) localStorage.setItem('mirefir.muted', String(data.muted))
-  if (data.playlistUrl) localStorage.setItem('mirefir.playlistUrl', data.playlistUrl)
+  const playlistUrl =
+    data.playlistUrl ||
+    (data.settings?.playlists || [])
+      .map((item) => (typeof item === 'string' ? item : item?.url))
+      .find(Boolean)
+  if (playlistUrl) localStorage.setItem('mirefir.playlistUrl', playlistUrl)
   if (data.playlistText) localStorage.setItem('mirefir.playlistText', data.playlistText)
-  if (data.epgUrl) localStorage.setItem('mirefir.epgUrl', data.epgUrl)
+  const epgUrl = data.epgUrl || data.settings?.epgUrl
+  if (epgUrl) localStorage.setItem('mirefir.epgUrl', epgUrl)
   if (data.history) localStorage.setItem('mirefir.history', JSON.stringify(data.history))
   if (data.session) localStorage.setItem('mirefir.session', JSON.stringify(data.session))
   queuePersistFile()

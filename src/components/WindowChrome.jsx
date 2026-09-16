@@ -6,7 +6,7 @@ const electron = typeof window !== 'undefined' && window.mirefir?.platform === '
 const EDGE = 72
 
 export function WindowChrome() {
-  const { uiScreen, liveGuideOpen, isModalOpen, exitPrompt, channelMenu, osFullscreen, padOpen } = usePlayer()
+  const { uiScreen, liveGuideOpen, isModalOpen, exitPrompt, channelMenu, osFullscreen, padOpen, setOsFullscreen } = usePlayer()
   const [peek, setPeek] = useState(true)
   const [topScrim, setTopScrim] = useState(true)
   const [bottomScrim, setBottomScrim] = useState(true)
@@ -120,7 +120,10 @@ export function WindowChrome() {
             type="button"
             title={osFullscreen ? 'Выйти из полного экрана' : 'На весь экран'}
             className="window-chrome-btn"
-            onClick={() => window.mirefir.toggleFullscreen?.()}
+            onClick={async () => {
+              const on = await window.mirefir.toggleFullscreen?.()
+              setOsFullscreen(Boolean(on))
+            }}
           >
             {osFullscreen ? (
               <svg viewBox="0 0 12 12" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">

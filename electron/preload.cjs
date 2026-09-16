@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld('mirefir', {
   },
   loadPersist: () => ipcRenderer.invoke('config:load'),
   savePersist: (data) => ipcRenderer.invoke('config:save', data),
+  saveBackup: (payload) => ipcRenderer.invoke('backup:save', payload),
+  openBackup: () => ipcRenderer.invoke('backup:open'),
   appInfo: () => ipcRenderer.invoke('app:info'),
   launchFlags: () => ipcRenderer.invoke('app:launch-flags'),
   clearInstallLock: () => ipcRenderer.invoke('app:clear-install-lock'),

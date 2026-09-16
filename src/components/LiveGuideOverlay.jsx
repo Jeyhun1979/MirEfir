@@ -6,7 +6,6 @@ import {
   formatRange,
   formatRemaining,
   getProgramProgress,
-  programsOnDay,
   startOfDay,
 } from '../lib/epg.js'
 import { programHasArchive } from '../lib/catchup.js'
@@ -21,6 +20,43 @@ const OVERSCAN = 6
 function wrapIndex(index, length) {
   if (!length) return 0
   return (index + length) % length
+}
+
+function buildScheduleRows(programs, days) {
+  const rows = []
+  let programCount = 0
+  const sorted = [...(programs || [])].sort((a, b) => a.start - b.start || a.end - b.end)
+  for (const day of days || []) {
+    const items = sorted.filter((item) => startOfDay(item.start) === day)
+    if (!items.length) continue
+    rows.push({ type: 'day', id: `day-${day}`, day })
+    for (const program of items) {
+      rows.push({
+        type: 'program',
+        id: program.id || `p-${day}-${program.start}`,
+        index: programCount,
+        day,
+        program,
+      })
+      programCount += 1
+    }
+  }
+  return rows
+}
+
+function firstProgramIndexForDay(programRows, day, liveProgram, todayStamp) {
+  if (!programRows.length) return 0
+  if (day === todayStamp && liveProgram) {
+    const liveIndex = programRows.findIndex(
+      (row) => row.program.id === liveProgram.id || row.program.start === liveProgram.start,
+    )
+    if (liveIndex >= 0) return liveIndex
+  }
+  const first = programRows.findIndex((row) => row.day === day)
+  if (first >= 0) return first
+  const after = programRows.findIndex((row) => row.day > day)
+  if (after >= 0) return after
+  return programRows.length - 1
 }
 
 function centerChild(container, child) {
@@ -201,9 +237,9 @@ export function LiveGuideOverlay() {
       }),
     [allPrograms, focusedChannel?.catchupDays, settings.archiveDays, settings.archiveEnabled, settings.epgDays, todayStamp],
   )
-  const selectedDay = days[dayCursor] || startOfDay(now.getTime())
-  const visiblePrograms = useMemo(() => programsOnDay(allPrograms, selectedDay), [allPrograms, selectedDay])
-  const focusedProgram = visiblePrograms[programCursor] || getCurrentProgram(focusedChannel)
+  const scheduleRows = useMemo(() => buildScheduleRows(allPrograms, days), [allPrograms, days])
+  const programRows = useMemo(() => scheduleRows.filter((row) => row.type === 'program'), [scheduleRows])
+  const focusedProgram = programRows[programCursor]?.program || getCurrentProgram(focusedChannel)
   const menuItems = (channel) => {
     if (!channel) return []
     const starred = favorites.includes(channel.id)
@@ -251,15 +287,14 @@ export function LiveGuideOverlay() {
   }, [channels, favorites, groups, liveGuideView, recentIds, selectedChannel?.id, selectedGroupId, settings.archiveEnabled, settings.hiddenGroups])
 
   useEffect(() => {
-    if (!visiblePrograms.length) {
+    if (!programRows.length) {
       setProgramCursor(0)
       return
     }
     const current = getCurrentProgram(focusedChannel)
-    const liveIndex = visiblePrograms.findIndex((item) => item.id === current?.id || (current && item.start === current.start))
     pendingAlignRef.current = 'live'
-    setProgramCursor(selectedDay === todayStamp && liveIndex >= 0 ? liveIndex : 0)
-  }, [focusedChannel?.id, liveGuideView, selectedDay, todayStamp, visiblePrograms.length])
+    setProgramCursor(firstProgramIndexForDay(programRows, todayStamp, current, todayStamp))
+  }, [focusedChannel?.id, liveGuideView, programRows.length, todayStamp])
 
   useEffect(() => {
     if (detailRef.current) detailRef.current.scrollTop = 0
@@ -303,6 +338,11 @@ export function LiveGuideOverlay() {
         return
       }
       const mode = pendingAlignRef.current
+      const row = programRows[programCursor]
+      if (row && programRows[programCursor - 1]?.day !== row.day) {
+        const header = list.querySelector(`[data-dayhead="${row.day}"]`)
+        if (header) centerChild(list, header)
+      }
       if (mode === 'live' || mode === 'day') {
         const dayEl = dayRef.current?.querySelector(`[data-day="${dayCursor}"]`)
         const box = list.getBoundingClientRect()
@@ -318,7 +358,7 @@ export function LiveGuideOverlay() {
     }
     frame = window.requestAnimationFrame(run)
     return () => window.cancelAnimationFrame(frame)
-  }, [channelCursor, dayCursor, daysOpen, focusedChannel?.id, liveGuideView, programCursor])
+  }, [channelCursor, dayCursor, daysOpen, focusedChannel?.id, liveGuideView, programCursor, programRows])
 
   useEffect(() => {
     if (!liveGuideView) return undefined
@@ -512,10 +552,22 @@ export function LiveGuideOverlay() {
           }
           if (focusCol === 'days') {
             pendingAlignRef.current = 'day'
-            setDayCursor((current) => Math.min(days.length - 1, Math.max(0, current + step)))
+            setDayCursor((current) => {
+              const next = Math.min(days.length - 1, Math.max(0, current + step))
+              const live = getCurrentProgram(focusedChannel)
+              setProgramCursor(firstProgramIndexForDay(programRows, days[next], live, todayStamp))
+              return next
+            })
           } else if (focusCol === 'programs') {
+            if (!programRows.length) return
             pendingAlignRef.current = null
-            setProgramCursor((current) => wrapIndex(current + step, visiblePrograms.length))
+            setProgramCursor((current) => {
+              const next = Math.min(programRows.length - 1, Math.max(0, current + step))
+              const day = programRows[next]?.day
+              const dayIndex = days.findIndex((item) => item === day)
+              if (dayIndex >= 0) setDayCursor(dayIndex)
+              return next
+            })
           } else moveChannel(step)
         }
         return
@@ -570,8 +622,10 @@ export function LiveGuideOverlay() {
     channelMenu,
     channels,
     commitFavoriteMove,
-    visiblePrograms.length,
+    programRows,
+    days,
     days.length,
+    todayStamp,
     daysOpen,
     focusCol,
     focusedChannel,
@@ -717,9 +771,20 @@ export function LiveGuideOverlay() {
                 </div>
               </div>
               <div ref={programRef} className="scroll-thin flex-1 overflow-y-auto px-2 pb-4" style={{ paddingBottom: '42vh' }}>
-                {visiblePrograms.map((program, index) => {
-                  const day = startOfDay(program.start)
-                  const prevDay = index > 0 ? startOfDay(visiblePrograms[index - 1].start) : null
+                {scheduleRows.map((row) => {
+                  if (row.type === 'day') {
+                    return (
+                      <div
+                        key={row.id}
+                        data-dayhead={row.day}
+                        className="px-2 py-1.5 text-[13px] font-medium text-sky-300"
+                      >
+                        {formatDayLong(row.day)}
+                      </div>
+                    )
+                  }
+                  const program = row.program
+                  const index = row.index
                   const hovered = focusCol === 'programs' && index === programCursor
                   const selected = index === programCursor
                   const current = program.start <= now.getTime() && now.getTime() < program.end
@@ -730,22 +795,23 @@ export function LiveGuideOverlay() {
                     channelAllowsArchive(focusedChannel) &&
                     programHasArchive(focusedChannel, program, now.getTime(), settings.archiveDays)
                   return (
-                    <div key={program.id || program.start}>
-                      {day !== prevDay ? (
-                        <div className="px-2 py-1.5 text-[13px] font-medium text-sky-300">{formatDayLong(day)}</div>
-                      ) : null}
                       <button
+                        key={row.id}
                         type="button"
                         data-prog={index}
                         onClick={() => {
                           setProgramCursor(index)
                           setFocusCol('programs')
+                          const dayIndex = days.findIndex((item) => item === row.day)
+                          if (dayIndex >= 0) setDayCursor(dayIndex)
                           const ok = playProgram(focusedChannel, program)
                           if (ok) setLiveGuideOpen(false)
                         }}
                         onMouseEnter={() => {
                           setProgramCursor(index)
                           setFocusCol('programs')
+                          const dayIndex = days.findIndex((item) => item === row.day)
+                          if (dayIndex >= 0) setDayCursor(dayIndex)
                         }}
                         className={`mb-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] ${
                           hovered ? 'bg-accent/75 text-white' : selected ? 'bg-white/12 text-white' : current ? 'text-sky-300' : 'text-white/75 hover:bg-white/8'
@@ -757,10 +823,9 @@ export function LiveGuideOverlay() {
                         <MarqueeText text={program.title} active={hovered || current} />
                         <ArchiveMark visible={archive} />
                       </button>
-                    </div>
                   )
                 })}
-                {!visiblePrograms.length ? <div className="px-2 py-4 text-sm text-white/40">Нет программы</div> : null}
+                {!programRows.length ? <div className="px-2 py-4 text-sm text-white/40">Нет программы</div> : null}
               </div>
             </aside>
             {daysOpen ? (
@@ -777,10 +842,18 @@ export function LiveGuideOverlay() {
                         setDaysOpen(true)
                         setDayCursor(index)
                         setFocusCol('days')
+                        pendingAlignRef.current = 'day'
+                        setProgramCursor(
+                          firstProgramIndexForDay(programRows, day, getCurrentProgram(focusedChannel), todayStamp),
+                        )
                       }}
                       onEnter={() => {
                         setDayCursor(index)
                         setFocusCol('days')
+                        pendingAlignRef.current = 'day'
+                        setProgramCursor(
+                          firstProgramIndexForDay(programRows, day, getCurrentProgram(focusedChannel), todayStamp),
+                        )
                       }}
                     />
                   </div>

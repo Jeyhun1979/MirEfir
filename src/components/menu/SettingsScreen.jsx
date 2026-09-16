@@ -6,6 +6,12 @@ import { ARCHIVE_DAYS, CLOCK_POSITIONS, CLOCK_SIZES, DEFAULT_SETTINGS, KEY_LABEL
 import { pickStorageFolder } from '../../lib/storage.js'
 import { usePlayer } from '../../store/PlayerContext.jsx'
 
+const SYSTEM_FOLDERS = [
+  { id: 'all', name: 'Все каналы' },
+  { id: 'favorites', name: 'Избранное' },
+  { id: 'recent', name: 'Недавние' },
+]
+
 const TABS = [
   { id: 'playlists', title: 'Плейлисты' },
   { id: 'epg', title: 'Телепрограмма' },
@@ -360,7 +366,7 @@ export function SettingsScreen() {
             <div className="mt-6 text-sm font-medium text-white/70">Папки каналов</div>
             <div className="mt-1 text-[12px] text-white/35">Выключить — папка скрыта в телегиде и в списке папок телепрограммы</div>
             <div className="mt-2 max-h-48 overflow-y-auto rounded-xl border border-white/5 p-2">
-              {(allPlaylistGroups || []).map((group) => {
+              {([...SYSTEM_FOLDERS, ...(allPlaylistGroups || [])]).map((group) => {
                 const hidden = (settings.hiddenGroups || []).includes(group.id)
                 return (
                   <button
@@ -712,7 +718,7 @@ export function SettingsScreen() {
             <div className="mb-4 rounded-xl border border-white/10 bg-black/20 p-3">
               <div className="mb-1 text-sm">Облачный код</div>
               <p className="mb-3 text-xs text-white/40">
-                Код работает в обе стороны: Windows ↔ Android. В нём избранное и ссылки на плейлист и телепрограмму. Локальный файл M3U так не передаётся — нужен URL. Скопируйте или отправьте в мессенджер и вставьте на другом устройстве.
+                Работает в обе стороны: Windows, Linux и Android. В коде настройки, избранное и ссылки на плейлист и телепрограмму. Локальный файл M3U так не передаётся — нужен URL. Скопируйте или отправьте в мессенджер и вставьте на другом устройстве.
               </p>
               <textarea
                 value={cloudCode}
@@ -769,13 +775,45 @@ export function SettingsScreen() {
               </div>
               {cloudNote ? <div className="mt-2 text-xs text-white/50">{cloudNote}</div> : null}
             </div>
-            <Row title="Сохранить данные" hint="Полный JSON-файл">
-              <button type="button" className="rounded-lg bg-white/10 px-3 py-1 text-sm" onClick={exportBackup}>
+            <Row title="Сохранить данные" hint="Полный JSON: настройки, плейлист, избранное. На Android откроется «Поделиться».">
+              <button
+                type="button"
+                className="rounded-lg bg-white/10 px-3 py-1 text-sm"
+                onClick={async () => {
+                  try {
+                    const result = await exportBackup()
+                    if (result === 'saved') setCloudNote('Файл сохранён')
+                    else if (result === 'shared') setCloudNote('Файл отправлен. Откройте его в MirEfir на другом устройстве.')
+                    else if (result === 'downloaded') setCloudNote('Файл сохранён в загрузки. Перенесите его на другое устройство и нажмите «Импорт».')
+                    else if (result === 'cancel') setCloudNote('')
+                  } catch (err) {
+                    setCloudNote(err.message)
+                  }
+                }}
+              >
                 Экспорт
               </button>
             </Row>
-            <Row title="Восстановить данные" hint="JSON-файл резервной копии">
-              <button type="button" className="rounded-lg bg-white/10 px-3 py-1 text-sm" onClick={() => restoreRef.current?.click()}>
+            <Row title="Восстановить данные" hint="JSON-файл с Windows, Linux или Android">
+              <button
+                type="button"
+                className="rounded-lg bg-white/10 px-3 py-1 text-sm"
+                onClick={async () => {
+                  try {
+                    if (window.mirefir?.openBackup) {
+                      const picked = await window.mirefir.openBackup()
+                      if (!picked?.text) return
+                      await importBackupFile(picked.text)
+                      setCloudNote('Восстановлено')
+                      return
+                    }
+                    restoreRef.current?.click()
+                  } catch (err) {
+                    setCloudNote(err.message)
+                    setError(err.message)
+                  }
+                }}
+              >
                 Импорт
               </button>
             </Row>
@@ -794,11 +832,18 @@ export function SettingsScreen() {
             <input
               ref={restoreRef}
               type="file"
-              accept="application/json"
+              accept=".json,application/json,text/plain,*/*"
               className="hidden"
               onChange={(event) => {
                 const file = event.target.files?.[0]
-                if (file) importBackupFile(file).catch((err) => setError(err.message))
+                event.target.value = ''
+                if (!file) return
+                importBackupFile(file)
+                  .then(() => setCloudNote('Восстановлено'))
+                  .catch((err) => {
+                    setCloudNote(err.message)
+                    setError(err.message)
+                  })
               }}
             />
           </div>

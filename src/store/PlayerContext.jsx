@@ -2,19 +2,21 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { getCurrentProgram, getNextProgram } from '../lib/epg.js'
 import { collectGroups, loadPlaylistFromFile, loadPlaylistFromUrl, parseM3U } from '../lib/m3uParser.js'
 import { bindEpgToChannels, loadXmltv, slimXmltv } from '../lib/xmltv.js'
-import { decodeCloudCode, encodeCloudCode } from '../lib/cloudCode.js'
+import { decodeCloudCode, encodeCloudCode, readBackupPayload, shareOrSaveJson } from '../lib/cloudCode.js'
 import { buildCatchupUrl, catchupUrlCandidates, canPlayArchive, channelHasCatchup } from '../lib/catchup.js'
 import { quitApp } from '../lib/quitApp.js'
 import { epgCacheIsFresh, loadEpgCache, readEpgCacheMeta, saveEpgCache, uniqueEpgUrls } from '../lib/epgCache.js'
 import {
   applyBackup,
   buildBackup,
+  DEFAULT_SETTINGS,
   enabledEpgUrls,
   loadSettings,
   normalizeEpgSources,
   queuePersistFile,
   restorePersistFile,
   saveSettings,
+  writeEpgSlots,
   xmltvWindow,
 } from '../lib/settingsStore.js'
 
@@ -116,6 +118,21 @@ function readFavorites() {
   }
 }
 
+function matchFavoriteId(channels, name) {
+  const target = String(name || '')
+    .trim()
+    .toLowerCase()
+  if (!target) return ''
+  const aliases = (channel) =>
+    [channel.displayName, channel.name, channel.tvgName]
+      .filter(Boolean)
+      .map((value) => String(value).trim().toLowerCase())
+  const exact = channels.find((channel) => aliases(channel).includes(target))
+  if (exact) return exact.id
+  const loose = channels.find((channel) => aliases(channel).some((item) => item.includes(target) || target.includes(item)))
+  return loose?.id || ''
+}
+
 const HISTORY_KEY = 'mirefir.history'
 const HISTORY_LIMIT = 10
 
@@ -201,6 +218,12 @@ export function PlayerProvider({ children }) {
   const [osFullscreen, setOsFullscreen] = useState(false)
   const [padOpen, setPadOpen] = useState(false)
 
+  useEffect(() => {
+    if (error !== 'Архив недоступен' && error !== 'Эта передача ещё не началась') return undefined
+    const timer = window.setTimeout(() => setError(''), error === 'Архив недоступен' ? 2000 : 4500)
+    return () => window.clearTimeout(timer)
+  }, [error])
+
   const allPlaylistGroups = useMemo(() => collectGroups(channels), [channels])
 
   const playlistGroups = useMemo(() => {
@@ -208,15 +231,15 @@ export function PlayerProvider({ children }) {
     return allPlaylistGroups.filter((group) => !hidden.includes(group.id))
   }, [allPlaylistGroups, settings.hiddenGroups])
 
-  const groups = useMemo(
-    () => [
+  const groups = useMemo(() => {
+    const hidden = settings.hiddenGroups || []
+    const system = [
       { id: 'all', name: 'Все каналы', count: channels.length, system: true },
       { id: 'favorites', name: 'Избранное', count: favorites.length, system: true },
       { id: 'recent', name: 'Недавние', count: recentIds.length, system: true },
-      ...playlistGroups,
-    ],
-    [channels.length, favorites.length, playlistGroups, recentIds.length],
-  )
+    ].filter((group) => !hidden.includes(group.id))
+    return [...system, ...playlistGroups]
+  }, [channels.length, favorites.length, playlistGroups, recentIds.length, settings.hiddenGroups])
 
   const visibleChannels = useMemo(() => {
     const hidden = settings.hiddenGroups || []
@@ -495,17 +518,17 @@ export function PlayerProvider({ children }) {
         return false
       }
       if (!settings.archiveEnabled) {
-        setError('Архив не доступен')
+        setError('Архив недоступен')
         return false
       }
       if (catchupDeniedRef.current.has(channel.id) || !canPlayArchive(channel, program, now, settings.archiveDays)) {
-        setError('Архив не доступен')
+        setError('Архив недоступен')
         return false
       }
       const urls = catchupUrlCandidates(channel, program.start, program.end)
       const url = urls[0] || buildCatchupUrl(channel, program.start, program.end)
       if (!url) {
-        setError('Архив не доступен')
+        setError('Архив недоступен')
         return false
       }
       const originStart = options.originStart || program.start
@@ -532,7 +555,7 @@ export function PlayerProvider({ children }) {
 
   const failArchive = useCallback(() => {
     setStreamOverride(null)
-    setError('Не удалось перемотать: запись на этом участке недоступна.')
+    setError('Архив недоступен')
   }, [])
 
   const channelAllowsArchive = useCallback(
@@ -691,6 +714,10 @@ export function PlayerProvider({ children }) {
     const now = Date.now()
     if (!exitPrompt && now - backLock.current < 250) return 'skip'
     backLock.current = now
+    if (error) {
+      setError('')
+      return 'error'
+    }
     if (exitPrompt) {
       quitApp()
       return 'exit'
@@ -757,7 +784,7 @@ export function PlayerProvider({ children }) {
     }
     setUiScreen('menu')
     return 'menu'
-  }, [exitPrompt, isFullscreen, isModalOpen, liveGuideView, menuResumeGuide, movingFavoriteId, channelMenu, osFullscreen, padOpen, uiScreen])
+  }, [error, exitPrompt, isFullscreen, isModalOpen, liveGuideView, menuResumeGuide, movingFavoriteId, channelMenu, osFullscreen, padOpen, uiScreen])
 
   const requestRecord = useCallback(() => {
     setRecordPulse((value) => value + 1)
@@ -780,14 +807,10 @@ export function PlayerProvider({ children }) {
     setLiveGuideView((current) => (current ? null : 'channels'))
   }, [selectedChannelId])
 
-  const exportBackup = useCallback(() => {
+  const exportBackup = useCallback(async () => {
     const backup = buildBackup({ favorites, settings })
-    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' })
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    link.download = `mirefir-backup-${new Date().toISOString().slice(0, 10)}.json`
-    link.click()
-    URL.revokeObjectURL(link.href)
+    const fileName = `mirefir-backup-${new Date().toISOString().slice(0, 10)}.json`
+    return shareOrSaveJson(fileName, backup)
   }, [favorites, settings])
 
   const exportCloudCode = useCallback(() => {
@@ -802,59 +825,95 @@ export function PlayerProvider({ children }) {
       favoriteNames: names,
       playlists: [...new Set(urls)],
       epgUrl: settings.epgUrl || epgUrl,
+      settings,
     })
-  }, [channels, epgUrl, favorites, playlistUrl, settings.epgUrl, settings.playlists])
+  }, [channels, epgUrl, favorites, playlistUrl, settings])
 
   const importCloudCode = useCallback(
     async (code) => {
       const data = decodeCloudCode(code)
-      const playlists = data.playlistUrls.map((url, index) => ({
-        id: index === 0 ? 'default' : `cloud-${index}`,
-        name: `Плейлист ${index + 1}`,
-        url,
-      }))
-      const next = {
-        ...loadSettings(),
-        playlists: playlists.length ? playlists : loadSettings().playlists,
-        activePlaylistId: playlists[0]?.id || 'default',
-        epgUrl: data.epgUrl || loadSettings().epgUrl,
+      const current = loadSettings()
+      const incoming = data.settings && typeof data.settings === 'object' ? data.settings : {}
+      const fromSettings = (incoming.playlists || [])
+        .map((item) => (typeof item === 'string' ? item : item?.url))
+        .filter(Boolean)
+      const playlistUrls = data.playlistUrls.length ? data.playlistUrls : fromSettings
+      const playlists = playlistUrls.map((url, index) => {
+        const named = (incoming.playlists || []).find((item) => (typeof item === 'string' ? item : item?.url) === url)
+        return {
+          id: index === 0 ? 'default' : `cloud-${index}`,
+          name: (named && named.name) || `Плейлист ${index + 1}`,
+          url,
+        }
+      })
+      let next = {
+        ...current,
+        ...incoming,
+        playlists: playlists.length ? playlists : incoming.playlists || current.playlists,
+        activePlaylistId: playlists[0]?.id || incoming.activePlaylistId || current.activePlaylistId || 'default',
+        epgUrl: data.epgUrl || incoming.epgUrl || current.epgUrl,
+        recordingPath: current.recordingPath,
+        keys: { ...DEFAULT_SETTINGS.keys, ...(incoming.keys || current.keys) },
+        hiddenGroups: Array.isArray(incoming.hiddenGroups) ? incoming.hiddenGroups : current.hiddenGroups,
       }
+      if (data.epgUrl) next = writeEpgSlots(next, { primaryUrl: data.epgUrl })
+      else next.epgSources = normalizeEpgSources(next)
       saveSettings(next)
       setSettingsState(next)
-      if (data.epgUrl) setEpgUrl(data.epgUrl)
+      if (next.epgUrl) setEpgUrl(next.epgUrl)
       const url = playlists[0]?.url
       const parsed = url ? await importFromUrl(url) : null
-      if (data.epgUrl) {
+      saveSettings(next)
+      setSettingsState(next)
+      if (next.epgUrl) {
         try {
-          await importEpg(data.epgUrl)
+          await importEpg(next.epgUrl)
         } catch {
           /* playlist already restored */
         }
       }
-      setChannels((current) => {
-        const pool = current.length ? current : parsed?.channels || []
-        const ids = data.favoriteNames
-          .map((name) => pool.find((channel) => (channel.displayName || channel.name) === name)?.id)
-          .filter(Boolean)
-        localStorage.setItem(FAVORITES_KEY, JSON.stringify(ids))
-        setFavorites(ids)
-        return current
-      })
+      const pool = parsed?.channels?.length ? parsed.channels : channels
+      const ids = data.favoriteNames.map((name) => matchFavoriteId(pool, name)).filter(Boolean)
+      localStorage.setItem(FAVORITES_KEY, JSON.stringify(ids))
+      setFavorites(ids)
+      queuePersistFile()
     },
-    [importEpg, importFromUrl],
+    [channels, importEpg, importFromUrl],
   )
 
-  const importBackupFile = useCallback(async (file) => {
-    const data = JSON.parse(await file.text())
-    applyBackup(data)
-    const next = loadSettings()
-    setSettingsState(next)
-    setFavorites(JSON.parse(localStorage.getItem(FAVORITES_KEY) || '[]'))
-    if (next.epgUrl) setEpgUrl(next.epgUrl)
-    if (data.playlistUrl || next.playlists[0]?.url) {
-      await importFromUrl(data.playlistUrl || next.playlists.find((item) => item.id === next.activePlaylistId)?.url || next.playlists[0].url)
-    }
-  }, [importFromUrl])
+  const importBackupFile = useCallback(
+    async (file) => {
+      const data = await readBackupPayload(file)
+      applyBackup(data)
+      const next = loadSettings()
+      setSettingsState(next)
+      setFavorites(JSON.parse(localStorage.getItem(FAVORITES_KEY) || '[]'))
+      if (data.volume != null) {
+        const value = Number(data.volume)
+        if (Number.isFinite(value)) setVolume(Math.min(1, Math.max(0.05, value)))
+      }
+      if (data.muted != null) setMuted(data.muted === true || data.muted === 'true' || data.muted === '1')
+      if (next.epgUrl) setEpgUrl(next.epgUrl)
+      const url =
+        data.playlistUrl ||
+        next.playlists.find((item) => item.id === next.activePlaylistId)?.url ||
+        next.playlists[0]?.url ||
+        ''
+      if (url) await importFromUrl(url)
+      else if (data.playlistText) await importFromText(data.playlistText)
+      saveSettings(next)
+      setSettingsState(next)
+      const epg = next.epgUrl || data.epgUrl
+      if (epg) {
+        try {
+          await importEpg(epg)
+        } catch {
+          /* settings already applied */
+        }
+      }
+    },
+    [importEpg, importFromText, importFromUrl],
+  )
 
   const shiftPrograms = useCallback(
     (programs) => {
@@ -954,17 +1013,15 @@ export function PlayerProvider({ children }) {
   }, [channels, listMode, selectedChannelId, selectedGroupId])
 
   useEffect(() => {
+    if (!groups.length) return
+    if (groups.some((group) => group.id === selectedGroupId)) return
+    setSelectedGroupId(groups[0].id)
+  }, [groups, selectedGroupId])
+
+  useEffect(() => {
     if (!window.mirefir?.onFullscreen) return undefined
     window.mirefir.isFullscreen?.().then((value) => setOsFullscreen(Boolean(value)))
     return window.mirefir.onFullscreen?.((value) => setOsFullscreen(Boolean(value)))
-  }, [])
-
-  useEffect(() => {
-    if (!window.mirefir?.launchFlags) return undefined
-    window.mirefir.launchFlags().then((flags) => {
-      if (flags?.fromUpdate) setBootScreen('install')
-    })
-    return undefined
   }, [])
 
   useEffect(() => {
@@ -1009,17 +1066,25 @@ export function PlayerProvider({ children }) {
     if (bootstrapped.current) return
     bootstrapped.current = true
     let cancelled = false
-    const shownAt = Date.now()
 
     const finishBoot = () => {
-      const wait = Math.max(0, 1100 - (Date.now() - shownAt))
-      window.setTimeout(() => {
-        setBootScreen(null)
-        window.mirefir?.clearInstallLock?.()
-      }, wait)
+      setBootScreen(null)
+      window.mirefir?.clearInstallLock?.()
+    }
+
+    const attachCachedGuide = (xmltv, channelList) => {
+      if (!xmltv || cancelled) return
+      const bound = bindEpgToChannels(channelList, xmltv)
+      xmltvRef.current = slimXmltv(xmltv, bound.channels)
+      setChannels(bound.channels)
+      setEpg(bound.epg)
     }
 
     const start = async () => {
+      const flags = await window.mirefir?.launchFlags?.()
+      if (cancelled) return
+      if (flags?.fromUpdate) setBootScreen('install')
+
       await restorePersistFile()
       if (cancelled) return
       setFavorites(readFavorites())
@@ -1041,20 +1106,20 @@ export function PlayerProvider({ children }) {
         return
       }
 
-      const [cachedXmltv, meta] = await Promise.all([loadEpgCache(), readEpgCacheMeta()])
-      if (cancelled) return
-      if (cachedXmltv) xmltvRef.current = cachedXmltv
-
+      let parsedChannels = []
+      let ready = false
       if (savedText) {
         try {
-          await applyPlaylist(parseM3U(savedText, 'Плейлист'))
+          const parsed = parseM3U(savedText, 'Плейлист')
+          parsedChannels = parsed.channels || []
+          await applyPlaylist(parsed)
+          ready = parsedChannels.length > 0
         } catch {
           /* cache unreadable — try the URL */
         }
-      } else {
-        setStatus('Загрузка плейлиста…')
       }
-      finishBoot()
+      if (ready) finishBoot()
+      else setStatus('Загрузка плейлиста…')
 
       const refreshInBackground = async () => {
         try {
@@ -1066,27 +1131,42 @@ export function PlayerProvider({ children }) {
               queuePersistFile()
             }
             persistPlaylistUrl(url)
-            await applyPlaylist(parsed, { silent: Boolean(savedText) })
+            await applyPlaylist(parsed, { silent: ready })
+            parsedChannels = parsed.channels || parsedChannels
           } else if (!savedText) {
             throw new Error('no playlist')
           }
-          const latest = loadSettings()
-          const guides = enabledEpgUrls(latest)
-          const guide = guides[0] || readEpgUrl() || latest.epgUrl
-          if (!guide && !guides.length) return
-          if (cachedXmltv && epgCacheIsFresh(meta, latest)) return
-          if (cancelled) return
-          importEpg(guides.length ? guides : guide).catch((err) => {
-            if (cachedXmltv) return
-            setError(err.message || 'Не удалось загрузить телепрограмму. Её можно добавить позже.')
-          })
+          if (!ready) finishBoot()
+
+          window.setTimeout(async () => {
+            if (cancelled) return
+            const [cachedXmltv, meta] = await Promise.all([loadEpgCache(), readEpgCacheMeta()]).catch(() => [null, null])
+            if (cancelled) return
+            if (cachedXmltv) attachCachedGuide(cachedXmltv, parsedChannels)
+
+            const latest = loadSettings()
+            const guides = enabledEpgUrls(latest)
+            const guide = guides[0] || readEpgUrl() || latest.epgUrl
+            if (!guide && !guides.length) return
+            if (cachedXmltv && epgCacheIsFresh(meta, latest)) return
+            if (cancelled) return
+            importEpg(guides.length ? guides : guide).catch((err) => {
+              if (cachedXmltv) return
+              setError(err.message || 'Не удалось загрузить телепрограмму. Её можно добавить позже.')
+            })
+          }, 400)
         } catch {
           if (savedText) {
             setStatus('Плейлист из памяти. Обновление по ссылке не удалось')
+            window.setTimeout(async () => {
+              const cachedXmltv = await loadEpgCache().catch(() => null)
+              if (!cancelled && cachedXmltv) attachCachedGuide(cachedXmltv, parsedChannels)
+            }, 400)
             return
           }
           setStatus('Плейлист сохранён, повторная загрузка не удалась')
           setError('Не удалось открыть плейлист. Ссылка или файл уже сохранены — повторите позже, вводить заново не нужно.')
+          finishBoot()
         }
       }
 
@@ -1114,7 +1194,7 @@ export function PlayerProvider({ children }) {
     visibleChannels,
     selectedGroupId,
     selectedChannel,
-    streamUrl: bootScreen ? '' : (streamOverride?.url || selectedChannel?.url || ''),
+    streamUrl: bootScreen === 'install' ? '' : (streamOverride?.url || selectedChannel?.url || ''),
     playback: streamOverride,
     playProgram,
     failArchive,
@@ -1190,6 +1270,7 @@ export function PlayerProvider({ children }) {
     toggleLiveGuide,
     bootScreen,
     osFullscreen,
+    setOsFullscreen,
     padOpen,
     setPadOpen,
     voiceArmed,

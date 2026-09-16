@@ -36,3 +36,12 @@
   StrCpy $R0 0
   ClearErrors
 !macroend
+
+!macro customInstall
+  nsExec::ExecToLog '"$SYSDIR\netsh.exe" advfirewall firewall delete rule name="MirEfir"'
+  Pop $0
+  nsExec::ExecToLog '"$SYSDIR\netsh.exe" advfirewall firewall add rule name="MirEfir" dir=in action=allow program="$INSTDIR\MirEfir.exe" enable=yes profile=any'
+  Pop $0
+  nsExec::ExecToLog '"$SYSDIR\netsh.exe" advfirewall firewall add rule name="MirEfir Out" dir=out action=allow program="$INSTDIR\MirEfir.exe" enable=yes profile=any'
+  Pop $0
+!macroend

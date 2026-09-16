@@ -59,11 +59,30 @@ function migrateLegacyProfile() {
 }
 
 const startedFromUpdate = process.argv.includes('--updated') || installInProgress()
+let focusResetTimer = 0
 
-function focusWindow(win) {
+function activateOnWindows() {
+  if (process.platform !== 'win32') return
+  const { execFile } = require('child_process')
+  execFile(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-WindowStyle',
+      'Hidden',
+      '-Command',
+      `try { (New-Object -ComObject WScript.Shell).AppActivate(${process.pid}) | Out-Null } catch {}`,
+    ],
+    { windowsHide: true },
+    () => {},
+  )
+}
+
+function focusWindow(win, { sticky = false } = {}) {
   if (!win || win.isDestroyed()) return
   if (win.isMinimized()) win.restore()
   win.show()
+  win.flashFrame(false)
   if (typeof win.moveTop === 'function') win.moveTop()
   try {
     win.setAlwaysOnTop(true, 'screen-saver')
@@ -72,9 +91,19 @@ function focusWindow(win) {
   }
   win.focus()
   if (typeof app.focus === 'function') app.focus({ steal: true })
-  setTimeout(() => {
+  activateOnWindows()
+  const hold = sticky || startedFromUpdate ? 4500 : 900
+  clearTimeout(focusResetTimer)
+  focusResetTimer = setTimeout(() => {
     if (!win.isDestroyed()) win.setAlwaysOnTop(false)
-  }, 2500)
+  }, hold)
+}
+
+function scheduleFocus(win) {
+  const delays = startedFromUpdate ? [0, 300, 900, 2000, 4000] : [0, 250, 1200]
+  for (const ms of delays) {
+    setTimeout(() => focusWindow(win, { sticky: startedFromUpdate }), ms)
+  }
 }
 
 const gotLock = app.requestSingleInstanceLock()
@@ -140,8 +169,12 @@ function createWindow() {
 
   win.setMenuBarVisibility(false)
   wireWindowIpc(win)
-  win.once('ready-to-show', () => focusWindow(win))
-  win.webContents.once('did-finish-load', () => focusWindow(win))
+  scheduleFocus(win)
+  win.once('ready-to-show', () => focusWindow(win, { sticky: startedFromUpdate }))
+  win.webContents.once('did-finish-load', () => focusWindow(win, { sticky: startedFromUpdate }))
+  win.on('show', () => {
+    if (startedFromUpdate) focusWindow(win, { sticky: true })
+  })
 
   win.on('closed', () => {
     if (process.platform !== 'darwin') forceQuit()
@@ -156,7 +189,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   if (!gotLock) return
-  migrateLegacyProfile()
+  if (typeof app.setAppUserModelId === 'function') app.setAppUserModelId('com.mirefir.app')
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
     if (permission === 'openExternal') {
       callback(false)
@@ -178,6 +211,7 @@ app.whenReady().then(() => {
 
   registerVoskProtocol(protocol)
   createWindow()
+  migrateLegacyProfile()
   registerUpdateIpc()
 
   app.on('activate', () => {
@@ -286,15 +320,27 @@ ipcMain.handle('window:minimize', (event) => {
 ipcMain.handle('window:toggle-fullscreen', (event) => {
   const win = fromSender(event)
   if (!win) return false
-  win.setFullScreen(!win.isFullScreen())
-  return win.isFullScreen()
+  const next = !win.isFullScreen()
+  win.setFullScreen(next)
+  const notify = () => {
+    if (!win.isDestroyed()) win.webContents.send('window:fullscreen', win.isFullScreen())
+  }
+  setTimeout(notify, 0)
+  setTimeout(notify, 80)
+  return next
 })
 
 ipcMain.handle('window:set-fullscreen', (event, on) => {
   const win = fromSender(event)
   if (!win) return false
-  win.setFullScreen(Boolean(on))
-  return win.isFullScreen()
+  const next = Boolean(on)
+  win.setFullScreen(next)
+  const notify = () => {
+    if (!win.isDestroyed()) win.webContents.send('window:fullscreen', win.isFullScreen())
+  }
+  setTimeout(notify, 0)
+  setTimeout(notify, 80)
+  return next
 })
 
 ipcMain.handle('window:is-fullscreen', (event) => Boolean(fromSender(event)?.isFullScreen()))
@@ -330,7 +376,7 @@ ipcMain.handle('epg:meta', async () => {
 
 ipcMain.handle('epg:load-cache', async () => {
   try {
-    return fs.readFileSync(epgCachePath())
+    return await fs.promises.readFile(epgCachePath())
   } catch {
     return null
   }
@@ -360,6 +406,36 @@ ipcMain.handle('config:save', async (_event, data) => {
   fs.mkdirSync(app.getPath('userData'), { recursive: true })
   fs.writeFileSync(configPath(), JSON.stringify(data))
   return true
+})
+
+ipcMain.handle('backup:save', async (_event, payload) => {
+  const fileName = payload?.fileName || `mirefir-backup-${new Date().toISOString().slice(0, 10)}.json`
+  const text = typeof payload?.text === 'string' ? payload.text : JSON.stringify(payload?.data || {}, null, 2)
+  const result = await dialog.showSaveDialog({
+    title: 'Сохранить резервную копию',
+    defaultPath: path.join(app.getPath('documents'), fileName),
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+  })
+  if (result.canceled || !result.filePath) return { ok: false, canceled: true }
+  fs.writeFileSync(result.filePath, text, 'utf8')
+  return { ok: true, path: result.filePath }
+})
+
+ipcMain.handle('backup:open', async () => {
+  const result = await dialog.showOpenDialog({
+    title: 'Открыть резервную копию',
+    properties: ['openFile'],
+    filters: [
+      { name: 'JSON', extensions: ['json'] },
+      { name: 'Все файлы', extensions: ['*'] },
+    ],
+  })
+  if (result.canceled || !result.filePaths[0]) return null
+  const filePath = result.filePaths[0]
+  return {
+    name: path.basename(filePath),
+    text: fs.readFileSync(filePath, 'utf8'),
+  }
 })
 
 ipcMain.handle('app:info', () => ({

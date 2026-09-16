@@ -47,6 +47,7 @@ export function VideoPlayer({ fullscreen = false }) {
     failArchive,
     seekToMs,
     selectChannel,
+    channelAllowsArchive,
     focusZone,
     setFocusZone,
     setIsFullscreen,
@@ -59,6 +60,7 @@ export function VideoPlayer({ fullscreen = false }) {
     uiScreen,
     settings,
     error: playerError,
+    setError,
     updateSettings,
     recordingActive,
     setRecordingActive,
@@ -75,7 +77,7 @@ export function VideoPlayer({ fullscreen = false }) {
   const program = getCurrentProgram(selectedChannel)
   const nextProgram = getNextProgram(selectedChannel)
   const pauseForMulti = uiScreen === 'multiview' && !recordingActive
-  const { error, loading } = useHls(videoRef, pauseForMulti ? '' : streamUrl, {
+  const { loading } = useHls(videoRef, pauseForMulti ? '' : streamUrl, {
     fallbacks: pauseForMulti ? [] : playback?.urls || [],
     bufferSec: playback?.mode === 'archive' ? 45 : settings.bufferSec,
     requireVod: playback?.mode === 'archive',
@@ -94,6 +96,7 @@ export function VideoPlayer({ fullscreen = false }) {
   const [padOn, setPadOn] = useState(false)
   const [padFocus, setPadFocus] = useState('none')
   const [buttonCursor, setButtonCursor] = useState(PLAY_PAD_INDEX)
+  const [hoverIndex, setHoverIndex] = useState(-1)
   const [paused, setPaused] = useState(false)
   const [previewMs, setPreviewMs] = useState(null)
   const [seekHud, setSeekHud] = useState(null)
@@ -121,18 +124,22 @@ export function VideoPlayer({ fullscreen = false }) {
   const displayMs = previewMs == null ? actualMs : previewMs
   const displayProgress = hasBounds ? Math.min(1, Math.max(0, (displayMs - boundsStart) / durationMs)) : 0
 
+  const hidePad = () => {
+    window.clearTimeout(padTimer.current)
+    setPadOn(false)
+    setPadOpen(false)
+    setPadFocus('none')
+    setButtonCursor(PLAY_PAD_INDEX)
+    setHoverIndex(-1)
+    setPreviewMs(null)
+  }
+
   const showPad = () => {
     setPadOn(true)
     setPadOpen(true)
     if (draggingRef.current) return
     window.clearTimeout(padTimer.current)
-    padTimer.current = window.setTimeout(() => {
-      setPadOn(false)
-      setPadOpen(false)
-      setPadFocus('none')
-      setButtonCursor(PLAY_PAD_INDEX)
-      setPreviewMs(null)
-    }, PAD_MS)
+    padTimer.current = window.setTimeout(() => hidePad(), PAD_MS)
   }
 
   const clampMs = (value) => {
@@ -232,7 +239,7 @@ export function VideoPlayer({ fullscreen = false }) {
 
   useEffect(() => {
     const onPad = () => {
-      setPadFocus('buttons')
+      setPadFocus('none')
       setButtonCursor(PLAY_PAD_INDEX)
       showPad()
     }
@@ -242,7 +249,8 @@ export function VideoPlayer({ fullscreen = false }) {
       showPad()
     }
     const onPadDown = () => {
-      setPadFocus((prev) => (prev === 'buttons' ? 'bar' : 'buttons'))
+      setPadFocus((prev) => (prev === 'none' || prev === 'buttons' ? 'buttons' : prev))
+      setButtonCursor(PLAY_PAD_INDEX)
       showPad()
     }
     window.addEventListener('mirefir:pad', onPad)
@@ -259,6 +267,7 @@ export function VideoPlayer({ fullscreen = false }) {
     if (padOpen) return
     setPadOn(false)
     setPadFocus('none')
+    setHoverIndex(-1)
     setPreviewMs(null)
   }, [padOpen])
 
@@ -266,28 +275,37 @@ export function VideoPlayer({ fullscreen = false }) {
     if (!padOn || liveGuideOpen || uiScreen) return undefined
     const onKey = (event) => {
       const dir = arrowDir(event)
+      if (padFocus === 'none') {
+        if (isBackKey(event)) {
+          event.preventDefault()
+          event.stopPropagation()
+          hidePad()
+          return
+        }
+        if (dir === 'down') {
+          event.preventDefault()
+          event.stopPropagation()
+          setPadFocus('buttons')
+          setButtonCursor(PLAY_PAD_INDEX)
+          showPad()
+        }
+        return
+      }
       if (isBackKey(event)) {
         event.preventDefault()
         event.stopPropagation()
-        setPadOn(false)
-        setPadOpen(false)
-        setPadFocus('none')
-        setPreviewMs(null)
+        hidePad()
         return
       }
       if (dir === 'up' || dir === 'down') {
         event.preventDefault()
         event.stopPropagation()
         showPad()
-        if (padFocus === 'none' || padFocus === 'buttons') {
+        if (padFocus === 'buttons') {
           if (dir === 'down') setPadFocus('bar')
-          else setPadFocus('buttons')
           return
         }
-        if (padFocus === 'bar') {
-          if (dir === 'up') setPadFocus('buttons')
-          return
-        }
+        if (padFocus === 'bar' && dir === 'up') setPadFocus('buttons')
         return
       }
       if (dir === 'left' || dir === 'right') {
@@ -301,7 +319,6 @@ export function VideoPlayer({ fullscreen = false }) {
           window.setTimeout(() => setPreviewMs(null), 400)
           return
         }
-        setPadFocus('buttons')
         setButtonCursor((current) => {
           const count = padActionsRef.current.length || 1
           return (current + (dir === 'right' ? 1 : -1) + count) % count
@@ -328,6 +345,7 @@ export function VideoPlayer({ fullscreen = false }) {
     program,
     selectedChannel,
     playback,
+    archiveOk: Boolean(settings.archiveEnabled) && channelAllowsArchive(selectedChannel),
   }
 
   useEffect(() => {
@@ -339,6 +357,11 @@ export function VideoPlayer({ fullscreen = false }) {
 
       if (!archiveMode && seconds > 0) {
         setSeekHud({ label: 'Прямой эфир', at: Date.now() })
+        return
+      }
+
+      if (!archiveMode && seconds < 0 && !state.archiveOk) {
+        setError('Архив недоступен')
         return
       }
 
@@ -376,16 +399,23 @@ export function VideoPlayer({ fullscreen = false }) {
         end: originEnd,
         title: state.playback?.title || state.program?.title,
       })
-      setSeekHud({
-        label: ok ? `${seconds > 0 ? '+' : '−'}${Math.abs(seconds)} сек` : 'Перемотка недоступна',
-        at: Date.now(),
-      })
+      if (ok) {
+        setSeekHud({ label: `${seconds > 0 ? '+' : '−'}${Math.abs(seconds)} сек`, at: Date.now() })
+        return
+      }
+      setError('Архив недоступен')
     }
 
     const onSeek = (event) => applySeek(Number(event.detail?.seconds) || 0)
+    const onDenied = (event) =>
+      setSeekHud({ label: event.detail?.label || 'Архив недоступен', at: Date.now() })
     window.addEventListener('mirefir:seek', onSeek)
-    return () => window.removeEventListener('mirefir:seek', onSeek)
-  }, [seekToMs])
+    window.addEventListener('mirefir:seek-denied', onDenied)
+    return () => {
+      window.removeEventListener('mirefir:seek', onSeek)
+      window.removeEventListener('mirefir:seek-denied', onDenied)
+    }
+  }, [channelAllowsArchive, seekToMs, setError])
 
   useEffect(() => {
     if (!seekHud) return undefined
@@ -458,7 +488,7 @@ export function VideoPlayer({ fullscreen = false }) {
   }
 
   const level = muted ? 0 : volume
-  const showSpinner = Boolean(selectedChannel) && loading && !error
+  const showSpinner = Boolean(selectedChannel) && loading
   const goLive = () => {
     if (selectedChannel) selectChannel(selectedChannel.id)
   }
@@ -532,12 +562,6 @@ export function VideoPlayer({ fullscreen = false }) {
         </div>
       ) : null}
 
-      {error ? (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/70 px-8 text-center text-sm text-white/70">
-          {error}
-        </div>
-      ) : null}
-
       {showVolume ? (
         <div className="absolute right-5 top-1/2 z-20 flex -translate-y-1/2 flex-col items-center gap-2 rounded-2xl bg-black/65 px-3 py-4">
           <div className="text-[11px] uppercase tracking-wider text-white/50">{muted || level === 0 ? 'Mute' : 'Громкость'}</div>
@@ -557,6 +581,12 @@ export function VideoPlayer({ fullscreen = false }) {
         </div>
       )}
 
+      {playerError ? (
+        <div className="pointer-events-none absolute bottom-36 left-1/2 z-30 -translate-x-1/2 rounded-2xl bg-black/80 px-5 py-3 text-center text-sm">
+          {playerError}
+        </div>
+      ) : null}
+
       {seekHud ? (
         <div className="absolute bottom-28 left-1/2 z-30 -translate-x-1/2 rounded-xl bg-black/70 px-4 py-2 text-sm">
           {seekHud.label}
@@ -570,7 +600,7 @@ export function VideoPlayer({ fullscreen = false }) {
           }`}
         >
           {padItems.map((item, index) => {
-            const focused = padFocus === 'buttons' && index === buttonCursor
+            const focused = (padFocus === 'buttons' && index === buttonCursor) || hoverIndex === index
             const play = item.kind === 'play'
             return (
             <button
@@ -587,10 +617,10 @@ export function VideoPlayer({ fullscreen = false }) {
                     }`
               }
               onMouseEnter={() => {
-                setPadFocus('buttons')
-                setButtonCursor(index)
+                setHoverIndex(index)
                 showPad()
               }}
+              onMouseLeave={() => setHoverIndex((current) => (current === index ? -1 : current))}
               onClick={(event) => {
                 event.stopPropagation()
                 if (item.id === 'back' || item.id === 'fwd') return
@@ -651,7 +681,6 @@ export function VideoPlayer({ fullscreen = false }) {
               onPointerUp={endBarDrag}
               onPointerCancel={endBarDrag}
               onMouseEnter={() => {
-                setPadFocus('bar')
                 showPad()
               }}
             >
@@ -668,12 +697,12 @@ export function VideoPlayer({ fullscreen = false }) {
             </div>
           </div>
         ) : null}
-        {recHint || recorder.error || playerError ? (
-          <div className="mt-2 text-[11px] text-red-300">{recHint || recorder.error || playerError}</div>
+        {recHint || recorder.error ? (
+          <div className="mt-2 text-[11px] text-red-300">{recHint || recorder.error}</div>
         ) : null}
         <div className="mt-2 text-[11px] text-white/35">
           {fullscreen || focusZone === 'player'
-            ? 'OK — панель · ↓ меню · ещё ↓ полоса · ← гид · ←→ перемотка на линии · Назад — закрыть'
+            ? 'OK — панель · ↓ фокус меню · ещё ↓ полоса · ← гид · → пред. канал'
             : 'Enter — на весь экран · ← гид · P — PiP · V — голос'}
         </div>
       </div>
