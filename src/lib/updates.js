@@ -18,9 +18,6 @@ export function pickDownload(assets, kind = '') {
   if (kind === 'linux' || (/Linux/i.test(ua) && !/Android/i.test(ua))) {
     return files.find((item) => /\.AppImage$/i.test(item.name)) || files.find((item) => /\.tar\.gz$/i.test(item.name))
   }
-  if (kind === 'portable') {
-    return files.find((item) => /\.exe$/i.test(item.name) && !/setup/i.test(item.name))
-  }
   return files.find((item) => /\.exe$/i.test(item.name) && /setup/i.test(item.name)) || files.find((item) => /\.exe$/i.test(item.name))
 }
 

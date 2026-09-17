@@ -26,8 +26,7 @@ export function UpdateDialog() {
           return
         }
         let kind = ''
-        if (info?.portable) kind = 'portable'
-        else if (/Android/i.test(navigator.userAgent)) kind = 'android'
+        if (/Android/i.test(navigator.userAgent)) kind = 'android'
         setUpdate(await checkForUpdate(kind))
       } catch {
         setUpdate(null)

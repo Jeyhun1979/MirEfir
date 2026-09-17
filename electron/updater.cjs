@@ -132,56 +132,56 @@ function markInstallPending() {
   fs.writeFileSync(lock, `updated ${Date.now()}`)
 }
 
+function splashTemplatePath() {
+  const unpacked = path.join(process.resourcesPath || '', 'install-splash.ps1')
+  if (unpacked && fs.existsSync(unpacked)) return unpacked
+  return path.join(__dirname, 'installSplash.ps1')
+}
+
+function psArg(value) {
+  return `'${String(value).replace(/'/g, "''")}'`
+}
+
+function vbsString(value) {
+  return `"${String(value).replace(/"/g, '""')}"`
+}
+
 function applyDownloadedFile(filePath) {
   if (!filePath || !fs.existsSync(filePath)) throw new Error('Файл обновления не найден')
   applying = true
   const temp = app.getPath('temp')
-  const bat = path.join(temp, 'mirefir-update.cmd')
+  const splash = path.join(temp, 'mirefir-install-splash.ps1')
   const vbs = path.join(temp, 'mirefir-update.vbs')
   const log = path.join(app.getPath('userData'), 'updater.log')
+  const lock = installLockPath()
   const exe = process.execPath
   const setup = path.resolve(filePath)
   const dir = path.dirname(exe)
+  const template = splashTemplatePath()
+  if (!fs.existsSync(template)) throw new Error('Нет окна установки')
   markInstallPending()
+  const raw = fs.readFileSync(template, 'utf8').replace(/^\uFEFF/, '')
+  fs.writeFileSync(splash, `\uFEFF${raw}`, 'utf8')
 
-  const lines = [
-    '@echo off',
-    'setlocal EnableExtensions',
-    `echo apply-start %date% %time%>>${quote(log)}`,
-    'ping 127.0.0.1 -n 2 >nul',
-    `"%SystemRoot%\\System32\\taskkill.exe" /F /IM MirEfir.exe /T >>${quote(log)} 2>&1`,
-    'ping 127.0.0.1 -n 2 >nul',
-    `echo running-setup>>${quote(log)}`,
-    `start /wait "" ${quote(setup)} /S /NCRC`,
-    `echo setup-exit %ERRORLEVEL%>>${quote(log)}`,
-    `"%SystemRoot%\\System32\\taskkill.exe" /F /IM MirEfir.exe /T >>${quote(log)} 2>&1`,
-    'ping 127.0.0.1 -n 3 >nul',
-    'set TRY=0',
-    ':retry',
-    'set /a TRY+=1',
-    'if %TRY% GTR 6 goto failed',
-    `echo launch-try %TRY%>>${quote(log)}`,
-    `start "" /D ${quote(dir)} ${quote(exe)} --updated`,
-    'ping 127.0.0.1 -n 6 >nul',
-    `"%SystemRoot%\\System32\\tasklist.exe" /FI "IMAGENAME eq MirEfir.exe" | "%SystemRoot%\\System32\\find.exe" /I "MirEfir.exe" >nul`,
-    'if not errorlevel 1 goto running',
-    `echo launch-died %TRY%>>${quote(log)}`,
-    'goto retry',
-    ':failed',
-    `echo launch-failed>>${quote(log)}`,
-    'goto cleanup',
-    ':running',
-    `echo relaunched try=%TRY%>>${quote(log)}`,
-    'ping 127.0.0.1 -n 2 >nul',
-    `powershell.exe -NoProfile -WindowStyle Hidden -Command "try { (New-Object -ComObject WScript.Shell).AppActivate('MirEfir') | Out-Null } catch {}"`,
-    ':cleanup',
-    `del /f /q ${quote(setup)} >nul 2>&1`,
-    `del /f /q ${quote(vbs)} >nul 2>&1`,
-    'del /f /q "%~f0" >nul 2>&1',
-  ]
-  fs.writeFileSync(bat, lines.join('\r\n'), 'utf8')
-  fs.writeFileSync(vbs, `CreateObject("WScript.Shell").Run ${JSON.stringify(bat)}, 0, False\r\n`, 'utf8')
-  logUpdate(`spawn hidden installer ${setup}`)
+  const psExe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+  const command = [
+    quote(psExe),
+    '-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File',
+    quote(splash),
+    '-Exe',
+    psArg(exe),
+    '-Dir',
+    psArg(dir),
+    '-Setup',
+    psArg(setup),
+    '-Log',
+    psArg(log),
+    '-Lock',
+    psArg(lock),
+    '-RunSetup',
+  ].join(' ')
+  fs.writeFileSync(vbs, `CreateObject("WScript.Shell").Run ${vbsString(command)}, 1, False\r\n`, 'utf8')
+  logUpdate(`spawn install splash ${setup}`)
   spawn('wscript.exe', ['//B', '//Nologo', vbs], {
     detached: true,
     stdio: 'ignore',
@@ -193,7 +193,7 @@ function applyDownloadedFile(filePath) {
       if (!win.isDestroyed()) win.destroy()
     }
     app.exit(0)
-  }, 800)
+  }, 1600)
   return true
 }
 

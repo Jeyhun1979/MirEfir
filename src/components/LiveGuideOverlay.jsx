@@ -9,7 +9,6 @@ import {
   startOfDay,
 } from '../lib/epg.js'
 import { programHasArchive } from '../lib/catchup.js'
-import { groupForPlayingChannel } from '../lib/channelMatch.js'
 import { arrowDir, isBackKey, isConfirmKey, isMenuKey } from '../lib/remoteKeys.js'
 import { useClock } from '../hooks/useClock.js'
 import { usePlayer } from '../store/PlayerContext.jsx'
@@ -220,7 +219,26 @@ export function LiveGuideOverlay() {
   const okHeld = useRef(false)
   const pendingAlignRef = useRef('live')
 
-  const list = useMemo(() => {
+  const listForGroup = (id) => {
+    const hidden = settings.hiddenGroups || []
+    let next = channels.filter((channel) => !hidden.includes(channel.group))
+    if (id === 'favorites') next = favorites.map((fid) => channels.find((channel) => channel.id === fid)).filter(Boolean)
+    else if (id === 'recent') next = (recentIds || []).map((rid) => channels.find((channel) => channel.id === rid)).filter(Boolean)
+    else if (id && id !== 'all') next = next.filter((channel) => channel.group === id)
+    return next
+  }
+
+  const browseGroup = (group) => {
+    if (!group) return
+    setGroupId(group.id)
+    selectGroup(group.id)
+    const nextList = listForGroup(group.id)
+    const playing = nextList.findIndex((channel) => channel.id === selectedChannel?.id)
+    const index = playing >= 0 ? playing : 0
+    setChannelCursor(index)
+    const el = channelRef.current
+    setScrollTop(el ? keepChannelRowAtMid(el, index) : Math.max(0, index * CHANNEL_ROW - (viewport || 640) / 2 + CHANNEL_ROW / 2))
+  }
     const hidden = settings.hiddenGroups || []
     let next = channels.filter((channel) => !hidden.includes(channel.group))
     if (groupId === 'favorites') next = favorites.map((id) => channels.find((channel) => channel.id === id)).filter(Boolean)
@@ -265,11 +283,14 @@ export function LiveGuideOverlay() {
   useEffect(() => {
     if (!liveGuideView) {
       openedRef.current = false
+      setScrollTop(0)
       return
     }
     if (openedRef.current) return
     openedRef.current = true
-    const nextGroup = groupForPlayingChannel(selectedChannel, selectedGroupId, favorites, recentIds)
+    const inFavorites = selectedGroupId === 'favorites' && favorites.includes(selectedChannel?.id)
+    const inRecent = selectedGroupId === 'recent' && recentIds.includes(selectedChannel?.id)
+    const nextGroup = inFavorites ? 'favorites' : inRecent ? 'recent' : selectedChannel?.group || 'all'
     const hidden = settings.hiddenGroups || []
     let nextList = channels.filter((channel) => !hidden.includes(channel.group))
     if (nextGroup === 'favorites') nextList = favorites.map((id) => channels.find((channel) => channel.id === id)).filter(Boolean)
@@ -285,13 +306,22 @@ export function LiveGuideOverlay() {
     setDaysOpen(Boolean(settings.archiveEnabled))
     setFocusCol(liveGuideView === 'groups' ? 'groups' : 'channels')
     pendingAlignRef.current = 'live'
-    requestAnimationFrame(() => {
+    const mid = Math.max(0, index * CHANNEL_ROW - (viewport || 640) / 2 + CHANNEL_ROW / 2)
+    setScrollTop(mid)
+    let tries = 0
+    const align = () => {
       const el = channelRef.current
-      if (!el) return
-      const top = keepChannelRowAtMid(el, index)
-      setScrollTop(top)
-    })
-  }, [channels, favorites, groups, liveGuideView, recentIds, selectedChannel?.id, selectedGroupId, settings.archiveEnabled, settings.hiddenGroups])
+      if (!el) {
+        if (tries < 12) {
+          tries += 1
+          requestAnimationFrame(align)
+        }
+        return
+      }
+      setScrollTop(keepChannelRowAtMid(el, index))
+    }
+    requestAnimationFrame(align)
+  }, [channels, favorites, groups, liveGuideView, recentIds, selectedChannel?.id, selectedChannel?.group, selectedGroupId, settings.archiveEnabled, settings.hiddenGroups, viewport])
 
   useEffect(() => {
     if (!programRows.length) {
@@ -428,11 +458,9 @@ export function LiveGuideOverlay() {
         if (inGroups) {
           const group = groups[groupCursor]
           if (group) {
-            setGroupId(group.id)
-            selectGroup(group.id)
+            browseGroup(group)
             setLiveGuideView('categories')
             setFocusCol('channels')
-            setChannelCursor(0)
           }
           return
         }
@@ -590,12 +618,7 @@ export function LiveGuideOverlay() {
           if (inGroups) {
             setGroupCursor((current) => {
               const next = wrapIndex(current + step, groups.length)
-              const group = groups[next]
-              if (group) {
-                setGroupId(group.id)
-                selectGroup(group.id)
-                setChannelCursor(0)
-              }
+              browseGroup(groups[next])
               return next
             })
           } else moveChannel(step)
@@ -634,8 +657,8 @@ export function LiveGuideOverlay() {
     openMenu,
     playProgram,
     setLiveGuideOpen,
+    browseGroup,
     selectChannel,
-    selectGroup,
     setChannelMenu,
     setLiveGuideView,
     settings.keys?.liveGuide,
@@ -727,10 +750,8 @@ export function LiveGuideOverlay() {
                     key={group.id}
                     type="button"
                     onClick={() => {
-                      setGroupId(group.id)
                       setGroupCursor(index)
-                      selectGroup(group.id)
-                      setChannelCursor(0)
+                      browseGroup(group)
                       setLiveGuideView('categories')
                       setFocusCol('channels')
                     }}

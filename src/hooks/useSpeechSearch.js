@@ -118,10 +118,12 @@ async function captureUtterance(stream, stillThis, onLevel) {
 }
 
 function cleanHeard(text) {
-  return String(text || '')
+  const next = String(text || '')
     .replace(/\[unk\]/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+  if (/deprecated|main\.exe|whisper-cli|WARNING:/i.test(next)) return ''
+  return next
 }
 
 export function useSpeechSearch(onResult) {
@@ -201,6 +203,13 @@ export function useSpeechSearch(onResult) {
         return
       }
 
+      const ready = await readyPromise
+      if (!stillThis()) return
+      if (!ready?.ok) {
+        setError(ready?.error || 'Не удалось подготовить голосовую модель.')
+        return
+      }
+
       setStatus('Слушаю…')
       const { voice, pcm } = await captureUtterance(localStream, stillThis)
       dropStream()
@@ -211,12 +220,6 @@ export function useSpeechSearch(onResult) {
       }
 
       setStatus('Распознаю…')
-      const ready = await readyPromise
-      if (!stillThis()) return
-      if (!ready?.ok) {
-        setError(ready?.error || 'Не удалось подготовить голосовую модель.')
-        return
-      }
       const samples = floatToInt16(pcm)
       const result = await transcribeWhisper(
         samples.buffer.slice(samples.byteOffset, samples.byteOffset + samples.byteLength),

@@ -44,7 +44,9 @@ function binUrl() {
 }
 
 function findCli(root = binDir()) {
-  const want = process.platform === 'win32' ? ['whisper-cli.exe', 'main.exe'] : ['whisper-cli', 'main']
+  const prefer = process.platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli'
+  const fallback = process.platform === 'win32' ? 'main.exe' : 'main'
+  let foundFallback = ''
   const stack = [root]
   while (stack.length) {
     const dir = stack.pop()
@@ -57,10 +59,11 @@ function findCli(root = binDir()) {
     for (const entry of entries) {
       const full = path.join(dir, entry.name)
       if (entry.isDirectory()) stack.push(full)
-      else if (want.includes(entry.name)) return full
+      else if (entry.name === prefer) return full
+      else if (entry.name === fallback) foundFallback = full
     }
   }
-  return ''
+  return foundFallback
 }
 
 function modelReady() {
@@ -264,11 +267,19 @@ function textFromJson(file) {
   }
 }
 
+function isCliNoise(line) {
+  return (
+    !line ||
+    /^\[/.test(line) ||
+    /whisper|ggml|system_info|deprecated|WARNING:|main\.exe|whisper-cli/i.test(line)
+  )
+}
+
 function textFromStdout(raw) {
   return String(raw || '')
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter((line) => line && !/^\[/.test(line) && !/whisper|ggml|system_info|main:/i.test(line))
+    .filter((line) => !isCliNoise(line))
     .join(' ')
     .replace(/\s+/g, ' ')
     .trim()

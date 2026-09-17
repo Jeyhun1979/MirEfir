@@ -474,22 +474,10 @@ export function PlayerProvider({ children }) {
     }
   }, [upsertEpgSource])
 
-  const selectGroup = useCallback(
-    (groupId) => {
-      setListMode('live')
-      setSelectedGroupId(groupId)
-      const nextChannel =
-        groupId === 'all'
-          ? channels[0]
-          : groupId === 'favorites'
-            ? orderedFavorites(channels, favorites)[0]
-            : groupId === 'recent'
-              ? channels.find((channel) => channel.id === recentIds[0])
-              : channels.find((channel) => channel.group === groupId)
-      if (nextChannel) setSelectedChannelId(nextChannel.id)
-    },
-    [channels, favorites, recentIds],
-  )
+  const selectGroup = useCallback((groupId) => {
+    setListMode('live')
+    setSelectedGroupId(groupId)
+  }, [])
 
   const selectChannel = useCallback(
     (channelId) => {
@@ -1135,7 +1123,8 @@ export function PlayerProvider({ children }) {
               queuePersistFile()
             }
             persistPlaylistUrl(url)
-            await applyPlaylist(parsed, { silent: ready })
+            const sameText = Boolean(savedText && parsed.rawText && parsed.rawText === savedText)
+            if (!sameText) await applyPlaylist(parsed, { silent: ready })
             parsedChannels = parsed.channels || parsedChannels
           } else if (!savedText) {
             throw new Error('no playlist')

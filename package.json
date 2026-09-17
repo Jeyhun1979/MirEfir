@@ -1,7 +1,7 @@
 {
   "name": "mirefir",
   "private": true,
-  "version": "1.0.20",
+  "version": "1.0.21",
   "author": "MirEfir",
   "description": "IPTV player for Windows, Linux and Android",
   "main": "electron/main.cjs",
@@ -47,10 +47,15 @@
       "dist/**/*",
       "electron/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "electron/installSplash.ps1",
+        "to": "install-splash.ps1"
+      }
+    ],
     "win": {
       "target": [
-        "nsis",
-        "portable"
+        "nsis"
       ],
       "artifactName": "${productName}-${version}-windows.${ext}",
       "signAndEditExecutable": false,

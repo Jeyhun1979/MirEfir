@@ -44,4 +44,8 @@
   Pop $0
   nsExec::ExecToLog '"$SYSDIR\netsh.exe" advfirewall firewall add rule name="MirEfir Out" dir=out action=allow program="$INSTDIR\MirEfir.exe" enable=yes profile=any'
   Pop $0
+  IfFileExists "$INSTDIR\resources\install-splash.ps1" 0 mirefir_after_splash
+    CopyFiles /SILENT "$INSTDIR\resources\install-splash.ps1" "$TEMP"
+    ExecShell "open" "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" '-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File "$TEMP\install-splash.ps1" -Exe "$INSTDIR\MirEfir.exe" -Dir "$INSTDIR"' SW_SHOW
+  mirefir_after_splash:
 !macroend
