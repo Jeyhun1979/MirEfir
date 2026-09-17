@@ -9,6 +9,7 @@ import {
   startOfDay,
 } from '../lib/epg.js'
 import { programHasArchive } from '../lib/catchup.js'
+import { groupForPlayingChannel } from '../lib/channelMatch.js'
 import { arrowDir, isBackKey, isConfirmKey, isMenuKey } from '../lib/remoteKeys.js'
 import { useClock } from '../hooks/useClock.js'
 import { usePlayer } from '../store/PlayerContext.jsx'
@@ -59,7 +60,14 @@ function firstProgramIndexForDay(programRows, day, liveProgram, todayStamp) {
   return programRows.length - 1
 }
 
-function centerChild(container, child) {
+function keepChannelRowAtMid(el, index) {
+  if (!el) return 0
+  const next = Math.max(0, index * CHANNEL_ROW - el.clientHeight / 2 + CHANNEL_ROW / 2)
+  el.scrollTop = next
+  return next
+}
+
+function keepChildAtMid(container, child) {
   if (!container || !child) return
   const box = container.getBoundingClientRect()
   const row = child.getBoundingClientRect()
@@ -261,7 +269,7 @@ export function LiveGuideOverlay() {
     }
     if (openedRef.current) return
     openedRef.current = true
-    const nextGroup = selectedGroupId || 'all'
+    const nextGroup = groupForPlayingChannel(selectedChannel, selectedGroupId, favorites, recentIds)
     const hidden = settings.hiddenGroups || []
     let nextList = channels.filter((channel) => !hidden.includes(channel.group))
     if (nextGroup === 'favorites') nextList = favorites.map((id) => channels.find((channel) => channel.id === id)).filter(Boolean)
@@ -280,8 +288,7 @@ export function LiveGuideOverlay() {
     requestAnimationFrame(() => {
       const el = channelRef.current
       if (!el) return
-      const top = Math.max(0, index * CHANNEL_ROW - el.clientHeight / 2 + CHANNEL_ROW)
-      el.scrollTop = top
+      const top = keepChannelRowAtMid(el, index)
       setScrollTop(top)
     })
   }, [channels, favorites, groups, liveGuideView, recentIds, selectedChannel?.id, selectedGroupId, settings.archiveEnabled, settings.hiddenGroups])
@@ -310,7 +317,7 @@ export function LiveGuideOverlay() {
   useEffect(() => {
     if (!liveGuideView || !daysOpen) return
     const el = dayRef.current?.querySelector(`[data-day="${dayCursor}"]`)
-    centerChild(dayRef.current, el)
+    keepChildAtMid(dayRef.current, el)
   }, [dayCursor, daysOpen, days.length, liveGuideView])
 
   useEffect(() => {
@@ -337,24 +344,8 @@ export function LiveGuideOverlay() {
         }
         return
       }
-      const mode = pendingAlignRef.current
-      const row = programRows[programCursor]
-      if (row && programRows[programCursor - 1]?.day !== row.day) {
-        const header = list.querySelector(`[data-dayhead="${row.day}"]`)
-        if (header) centerChild(list, header)
-      }
-      if (mode === 'live' || mode === 'day') {
-        const dayEl = dayRef.current?.querySelector(`[data-day="${dayCursor}"]`)
-        const box = list.getBoundingClientRect()
-        const targetMid = dayEl
-          ? dayEl.getBoundingClientRect().top + dayEl.getBoundingClientRect().height / 2
-          : box.top + box.height / 2
-        const progMid = node.getBoundingClientRect().top + node.getBoundingClientRect().height / 2
-        list.scrollTop = Math.max(0, list.scrollTop + (progMid - targetMid))
-        pendingAlignRef.current = null
-        return
-      }
-      node.scrollIntoView({ block: 'nearest' })
+      keepChildAtMid(list, node)
+      pendingAlignRef.current = null
     }
     frame = window.requestAnimationFrame(run)
     return () => window.cancelAnimationFrame(frame)
@@ -368,9 +359,8 @@ export function LiveGuideOverlay() {
         const next = wrapIndex(current + step, list.length)
         const el = channelRef.current
         if (el) {
-          const top = next * CHANNEL_ROW
-          if (top < el.scrollTop) el.scrollTop = top
-          else if (top + CHANNEL_ROW > el.scrollTop + el.clientHeight) el.scrollTop = top + CHANNEL_ROW - el.clientHeight
+          const top = keepChannelRowAtMid(el, next)
+          setScrollTop(top)
         }
         return next
       })
@@ -409,7 +399,10 @@ export function LiveGuideOverlay() {
     const onKeyUp = (event) => {
       if (!isConfirmKey(event)) return
       window.clearTimeout(okTimer.current)
-      if (okHeld.current) return
+      if (okHeld.current) {
+        okHeld.current = false
+        return
+      }
       event.preventDefault()
       event.stopPropagation()
       if (movingFavoriteId) {
@@ -481,7 +474,7 @@ export function LiveGuideOverlay() {
           setChannelMenu(null)
           return
         }
-        if (isConfirmKey(event) && !event.repeat) startOkHold(channel)
+        if (isConfirmKey(event)) return
         return
       }
 
@@ -699,7 +692,7 @@ export function LiveGuideOverlay() {
                 <div className="flex items-center gap-2">
                   {watching ? <span className="text-[11px] text-sky-300">▶</span> : null}
                 <div className="truncate text-[14px] font-medium">
-                  {channel.number} {channel.displayName}
+                  {groupId === 'favorites' ? index + 1 : channel.number} {channel.displayName}
                 </div>
                 {fav ? <span className="text-[11px] text-amber-300">★</span> : null}
               </div>
@@ -767,10 +760,10 @@ export function LiveGuideOverlay() {
               <div className="flex items-center gap-3 px-3 py-3">
                 <LogoMark name={focusedChannel?.name} logo={focusedChannel?.logo} size={32} />
                 <div className="min-w-0 truncate text-[14px] font-medium">
-                  {focusedChannel?.number} {focusedChannel?.displayName}
+                  {groupId === 'favorites' ? channelCursor + 1 : focusedChannel?.number} {focusedChannel?.displayName}
                 </div>
               </div>
-              <div ref={programRef} className="scroll-thin flex-1 overflow-y-auto px-2 pb-4" style={{ paddingBottom: '42vh' }}>
+              <div ref={programRef} className="scroll-thin flex-1 overflow-y-auto px-2 pb-4" style={{ paddingBottom: '50vh' }}>
                 {scheduleRows.map((row) => {
                   if (row.type === 'day') {
                     return (
@@ -870,7 +863,8 @@ export function LiveGuideOverlay() {
           </div>
         ) : null}
         {channelMenu ? (
-          <div className="absolute top-24 left-[min(420px,40vw)] z-30 min-w-[240px] rounded-xl border border-white/15 bg-[#10151e] p-2 shadow-2xl">
+          <div className="absolute inset-0 z-30 flex items-center justify-center">
+            <div className="min-w-[260px] rounded-xl border border-white/15 bg-[#10151e] p-2 shadow-2xl">
             <div className="px-3 py-1 text-[12px] text-white/40">
               {(channels.find((item) => item.id === channelMenu.channelId) || focusedChannel)?.displayName}
             </div>
@@ -891,6 +885,7 @@ export function LiveGuideOverlay() {
                 {item.title}
               </button>
             ))}
+            </div>
           </div>
         ) : null}
         {error ? (

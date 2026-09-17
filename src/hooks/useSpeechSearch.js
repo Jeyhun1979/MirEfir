@@ -1,13 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createLiveRecognizer, getVoskModel } from '../lib/voskClient.js'
-
-function SpeechEngine() {
-  return window.SpeechRecognition || window.webkitSpeechRecognition || null
-}
-
-function hasElectronVosk() {
-  return typeof window.mirefir?.ensureVosk === 'function'
-}
+import { cancelWhisper, ensureWhisper, hasWhisper, transcribeWhisper } from '../lib/whisperBridge.js'
 
 function isDenied(err) {
   const name = String(err?.name || '')
@@ -132,19 +124,17 @@ function cleanHeard(text) {
     .trim()
 }
 
-export function useSpeechSearch(onResult, lang = 'ru-RU', phrasesRef) {
-  const recRef = useRef(null)
+export function useSpeechSearch(onResult) {
   const streamRef = useRef(null)
   const heardRef = useRef('')
   const genRef = useRef(0)
   const onResultRef = useRef(onResult)
-  const phrasesNow = () => (Array.isArray(phrasesRef?.current) ? phrasesRef.current : [])
   onResultRef.current = onResult
   const [listening, setListening] = useState(false)
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
   const [needPermission, setNeedPermission] = useState(false)
-  const supported = hasElectronVosk() || Boolean(SpeechEngine()) || Boolean(navigator.mediaDevices?.getUserMedia)
+  const supported = hasWhisper() || Boolean(navigator.mediaDevices?.getUserMedia)
 
   const releaseMic = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop())
@@ -153,13 +143,7 @@ export function useSpeechSearch(onResult, lang = 'ru-RU', phrasesRef) {
 
   const stop = useCallback(() => {
     genRef.current += 1
-    try {
-      recRef.current?.stop()
-    } catch {
-      /* already stopped */
-    }
-    recRef.current = null
-    window.mirefir?.cancelSpeech?.()
+    cancelWhisper()
     releaseMic()
     setListening(false)
     setStatus('')
@@ -174,6 +158,10 @@ export function useSpeechSearch(onResult, lang = 'ru-RU', phrasesRef) {
     const gen = genRef.current
     const emit = (text, extra) => onResultRef.current(text, extra)
     const stillThis = () => gen === genRef.current
+    const onProgress = (info) => {
+      if (!stillThis()) return
+      if (info?.text) setStatus(info.text)
+    }
     setListening(true)
 
     const finishText = (text, extra = {}) => {
@@ -186,171 +174,70 @@ export function useSpeechSearch(onResult, lang = 'ru-RU', phrasesRef) {
       emit(next, { final: true, ...extra })
     }
 
-    if (hasElectronVosk()) {
-      setListening(true)
-      const offProgress = window.mirefir.onVoskProgress?.((info) => {
-        if (!stillThis()) return
-        if (info?.text) setStatus(info.text)
-      })
-      let localStream = null
-      const dropStream = () => {
-        localStream?.getTracks().forEach((track) => track.stop())
-        if (streamRef.current === localStream) streamRef.current = null
-        localStream = null
-      }
+    let localStream = null
+    const dropStream = () => {
+      localStream?.getTracks().forEach((track) => track.stop())
+      if (streamRef.current === localStream) streamRef.current = null
+      localStream = null
+    }
+    try {
+      const readyPromise = ensureWhisper(onProgress)
+      setStatus('Открываю микрофон…')
       try {
-        setStatus('Готовлю голосовую модель…')
-        const ready = await window.mirefir.ensureVosk()
-        if (!stillThis()) return
-        if (!ready?.ok) {
-          setError(ready?.error || 'Не удалось подготовить голосовую модель.')
+        localStream = await openMicrophone()
+        if (!stillThis()) {
+          dropStream()
           return
         }
-
-        setStatus('Открываю микрофон…')
-        try {
-          localStream = await openMicrophone()
-          if (!stillThis()) {
-            dropStream()
-            return
-          }
-          streamRef.current = localStream
-        } catch (err) {
-          if (!stillThis()) return
-          if (isDenied(err)) {
-            setNeedPermission(true)
-            setError('Нужен доступ к микрофону.')
-          } else {
-            setError('Микрофон недоступен. Проверьте устройство в Windows.')
-          }
-          return
-        }
-
-        setStatus('Слушаю…')
-        const { voice, pcm } = await captureUtterance(localStream, stillThis)
-        dropStream()
-        if (!stillThis()) return
-        if (voice.peak < 0.008) {
-          setError('Микрофон молчит. Проверьте, какой микрофон выбран в Windows.')
-          return
-        }
-
-        setStatus('Распознаю…')
-        const phrases = phrasesNow()
-        const grammarJson = phrases.length ? JSON.stringify(phrases) : ''
-        let text = ''
-        if (typeof window.mirefir.transcribeSpeech === 'function' && ready.native !== false) {
-          const samples = floatToInt16(pcm)
-          const result = await window.mirefir.transcribeSpeech({
-            pcm: samples.buffer.slice(samples.byteOffset, samples.byteOffset + samples.byteLength),
-            sampleRate: 16000,
-            phrases,
-          })
-          if (!stillThis()) return
-          if (!result?.ok && result?.error && result.error !== 'NO_AUDIO') {
-            throw new Error(result.error)
-          }
-          text = String(result?.text || '').trim()
-        } else {
-          const model = await getVoskModel(ready.fileUrl || ready.url || 'mirefir-vosk://model.tar.gz')
-          if (!stillThis()) return
-          try {
-            const rec = createLiveRecognizer(model, 16000, grammarJson)
-            rec.push(pcm)
-            text = await rec.finish()
-          } catch {
-            const rec = createLiveRecognizer(model, 16000)
-            rec.push(pcm)
-            text = await rec.finish()
-          }
-        }
-        if (!stillThis()) return
-        finishText(text)
+        streamRef.current = localStream
       } catch (err) {
-        if (stillThis()) setError(err.message || 'Не удалось распознать голос.')
-      } finally {
-        offProgress?.()
-        dropStream()
-        if (stillThis()) {
-          setListening(false)
-          setStatus('')
+        if (!stillThis()) return
+        if (isDenied(err)) {
+          setNeedPermission(true)
+          setError('Нужен доступ к микрофону.')
+        } else {
+          setError('Микрофон недоступен. Проверьте устройство.')
         }
+        return
       }
-      return
-    }
 
-    const Ctor = SpeechEngine()
-    if (!Ctor) {
-      setError('Голосовой поиск на этой платформе недоступен.')
-      setListening(false)
-      return
-    }
+      setStatus('Слушаю…')
+      const { voice, pcm } = await captureUtterance(localStream, stillThis)
+      dropStream()
+      if (!stillThis()) return
+      if (voice.peak < 0.008) {
+        setError('Микрофон молчит. Проверьте, какой микрофон выбран.')
+        return
+      }
 
-    try {
-      const stream = await openMicrophone()
-      stream.getTracks().forEach((track) => track.stop())
+      setStatus('Распознаю…')
+      const ready = await readyPromise
+      if (!stillThis()) return
+      if (!ready?.ok) {
+        setError(ready?.error || 'Не удалось подготовить голосовую модель.')
+        return
+      }
+      const samples = floatToInt16(pcm)
+      const result = await transcribeWhisper(
+        samples.buffer.slice(samples.byteOffset, samples.byteOffset + samples.byteLength),
+        16000,
+        onProgress,
+      )
+      if (!stillThis()) return
+      if (!result?.ok && result?.error && result.error !== 'NO_AUDIO') {
+        throw new Error(result.error)
+      }
+      finishText(String(result?.text || '').trim())
     } catch (err) {
-      if (isDenied(err)) {
-        setNeedPermission(true)
-        setError('Нужен доступ к микрофону.')
-      } else {
-        setError('Нужен доступ к микрофону.')
+      if (stillThis()) setError(err.message || 'Не удалось распознать голос.')
+    } finally {
+      dropStream()
+      if (stillThis()) {
+        setListening(false)
+        setStatus('')
       }
-      setListening(false)
-      return
     }
-
-    if (!stillThis()) return
-
-    setListening(true)
-    const rec = new Ctor()
-    rec.lang = lang
-    rec.interimResults = true
-    rec.maxAlternatives = 3
-    rec.continuous = true
-
-    rec.onstart = () => setListening(true)
-    rec.onresult = (event) => {
-      let text = ''
-      let isFinal = false
-      for (let i = 0; i < event.results.length; i += 1) {
-        text += event.results[i][0].transcript
-        if (event.results[i].isFinal) isFinal = true
-      }
-      const next = text.trim()
-      if (!next) return
-      heardRef.current = next
-      emit(next, { final: isFinal })
-      if (isFinal) stop()
-    }
-    rec.onerror = (event) => {
-      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') setNeedPermission(true)
-      if (event.error === 'audio-capture') setError('Микрофон недоступен. Проверьте устройство в Windows.')
-      else if (event.error !== 'aborted') setError('Не услышали. Скажите название канала или «переключи на …».')
-      if (event.error !== 'no-speech') stop()
-    }
-    rec.onend = () => {
-      if (recRef.current === rec && !heardRef.current) {
-        setError('Не услышали. Скажите название канала или «переключи на …».')
-      }
-      if (recRef.current === rec) recRef.current = null
-      releaseMic()
-      setListening(false)
-    }
-
-    recRef.current = rec
-    try {
-      rec.start()
-    } catch (err) {
-      setError(err.message || 'Не удалось запустить распознавание.')
-      releaseMic()
-      setListening(false)
-    }
-
-    window.setTimeout(() => {
-      if (recRef.current === rec) stop()
-    }, 8000)
-  }, [lang, releaseMic, stop])
+  }, [stop])
 
   useEffect(() => () => stop(), [stop])
 

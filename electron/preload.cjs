@@ -38,12 +38,12 @@ contextBridge.exposeInMainWorld('mirefir', {
   applyUpdate: () => ipcRenderer.invoke('update:apply'),
   listenSpeech: (payload) => ipcRenderer.invoke('speech:listen', payload || {}),
   transcribeSpeech: (payload) => ipcRenderer.invoke('speech:transcribe', payload || {}),
-  ensureVosk: () => ipcRenderer.invoke('speech:ensure-vosk'),
+  ensureSpeech: () => ipcRenderer.invoke('speech:ensure'),
   cancelSpeech: () => ipcRenderer.invoke('speech:cancel'),
-  onVoskProgress: (handler) => {
+  onSpeechProgress: (handler) => {
     const listen = (_event, data) => handler(data)
-    ipcRenderer.on('speech:vosk-progress', listen)
-    return () => ipcRenderer.removeListener('speech:vosk-progress', listen)
+    ipcRenderer.on('speech:progress', listen)
+    return () => ipcRenderer.removeListener('speech:progress', listen)
   },
   onUpdateProgress: (handler) => {
     const listen = (_event, data) => handler(data)

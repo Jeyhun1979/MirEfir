@@ -48,7 +48,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss(), playlistProxy()],
   base: './',
   optimizeDeps: {
-    include: ['vosk-browser'],
+    include: ['hls.js'],
   },
   server: {
     host: '127.0.0.1',

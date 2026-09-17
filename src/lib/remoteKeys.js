@@ -29,16 +29,12 @@ export function isBackKey(event) {
 
 export function isOkKey(event) {
   const { key, code, keyCode } = event
-  return (
-    key === 'Enter' ||
-    key === 'NumpadEnter' ||
-    key === 'Select' ||
-    code === 'Enter' ||
-    code === 'NumpadEnter' ||
-    keyCode === 13 ||
-    keyCode === 23 ||
-    keyCode === 66
-  )
+  if (key === 'Enter' || key === 'NumpadEnter' || key === 'Select') return true
+  if (code === 'Enter' || code === 'NumpadEnter') return true
+  if (keyCode === 13 || keyCode === 23) return true
+  // Android KEYCODE_ENTER is 66; on Windows 66 is B / «и».
+  if (keyCode === 66 && (!key || key === 'Unidentified' || key === 'Enter' || key === 'Select')) return true
+  return false
 }
 
 export function isConfirmKey(event) {

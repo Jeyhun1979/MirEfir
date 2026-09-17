@@ -15,8 +15,8 @@ export function ChannelActionMenu() {
   if (!items.length) return null
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-40">
-      <div className="pointer-events-auto absolute top-24 left-6 min-w-[240px] rounded-xl border border-white/15 bg-[#10151e] p-2 shadow-2xl">
+    <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center">
+      <div className="pointer-events-auto min-w-[260px] rounded-xl border border-white/15 bg-[#10151e] p-2 shadow-2xl">
         <div className="px-3 py-1 text-[12px] text-white/40">{channel?.displayName || channel?.name}</div>
         {items.map((item, index) => (
           <button
@@ -161,7 +161,9 @@ export function ChannelList() {
                   }`}
                 >
                   {settings.showChannelNumbers ? (
-                    <div className="w-8 text-right text-[12px] tabular-nums text-white/35">{channel.number}</div>
+                    <div className="w-8 text-right text-[12px] tabular-nums text-white/35">
+                      {selectedGroupId === 'favorites' || listMode === 'favorites' ? index + 1 : channel.number}
+                    </div>
                   ) : null}
                   <LogoMark name={channel.name} logo={channel.logo} size={40} />
                   <div className="min-w-0 flex-1">

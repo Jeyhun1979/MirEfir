@@ -76,7 +76,7 @@ function spokenAbbrev(text) {
 function editDistance(left, right) {
   if (left === right) return 0
   if (!left || !right) return 99
-  if (Math.abs(left.length - right.length) > 2) return 99
+  if (Math.abs(left.length - right.length) > 3) return 99
   const rows = Array.from({ length: left.length + 1 }, (_, i) => {
     const row = new Array(right.length + 1)
     row[0] = i
@@ -103,7 +103,20 @@ export function foldSearch(text) {
     .replace(/(^| )(один|одна)( |$)/g, (_, left, _word, right) => `${left}1${right}`)
     .replace(/(^| )два( |$)/g, (_, left, right) => `${left}2${right}`)
     .replace(/(^| )три( |$)/g, (_, left, right) => `${left}3${right}`)
-  value = stripWords(value, ['uhd', 'fhd', 'hd', 'sd', '4k', 'hevc', 'hdr', 'tv', 'тв'])
+  value = stripWords(value, [
+    'uhd',
+    'fhd',
+    'hd',
+    'sd',
+    '4k',
+    'hevc',
+    'hdr',
+    'tv',
+    'тв',
+    'канал',
+    'телеканал',
+    'программа',
+  ])
   return value.replace(/\s+/g, ' ').trim()
 }
 
@@ -141,7 +154,7 @@ export function channelsForVoice(channels, extras = {}) {
   return out
 }
 
-export function voicePhrasesForChannels(channels, channelLimit = 300) {
+export function voicePhrasesForChannels(channels, channelLimit = 400) {
   const seen = new Set()
   const phrases = []
   const add = (raw) => {
@@ -164,16 +177,23 @@ export function voicePhrasesForChannels(channels, channelLimit = 300) {
     if (phrases.length > before) used += 1
     if (used >= channelLimit) break
   }
+  for (const channel of channels || []) {
+    const folded = foldSearch(channel.displayName || channel.name || '')
+    for (const token of folded.split(' ')) {
+      if (token.length >= 4 && token.length <= 24) add(token)
+    }
+  }
   return phrases
 }
 
-export function voskGrammarPhrases(channelPhrases, limit = 960) {
+export function voskGrammarPhrases(channelPhrases, limit = 1100) {
   const seen = new Set()
   const phrases = []
   for (const raw of channelPhrases || []) {
     const base = cleanPhrase(raw).toLowerCase()
     if (base.length < 2) continue
-    for (const prefix of GRAMMAR_PREFIXES) {
+    const prefixes = base.includes(' ') ? GRAMMAR_PREFIXES : ['']
+    for (const prefix of prefixes) {
       const phrase = `${prefix}${base}`
       if (seen.has(phrase)) continue
       seen.add(phrase)
@@ -194,6 +214,7 @@ function scoreChannel(channel, query, queryParts) {
     else if (name.includes(query) || (query.includes(name) && name.length >= 3)) score = Math.max(score, 72)
     else if (queryParts.length >= 2 && queryParts.every((part) => name.includes(part))) score = Math.max(score, 70)
     else if (name.length >= 4 && query.length >= 4 && editDistance(name, query) <= 1) score = Math.max(score, 68)
+    else if (name.length >= 5 && query.length >= 5 && editDistance(name, query) <= 2) score = Math.max(score, 62)
   }
   return score
 }
@@ -213,11 +234,74 @@ function pickFromList(list, query) {
   return bestScore >= 60 ? best : null
 }
 
+function uniqueTokenHit(channels, query) {
+  const tokens = query.split(' ').filter((part) => part.length >= 4)
+  if (!tokens.length) return null
+  const index = new Map()
+  for (const channel of channels || []) {
+    const name = foldSearch(channel.displayName || channel.name || '')
+    if (!name) continue
+    const seen = new Set(name.split(' ').filter((part) => part.length >= 4))
+    for (const part of seen) {
+      const list = index.get(part) || []
+      list.push(channel)
+      index.set(part, list)
+    }
+  }
+  let best = null
+  let bestCount = 99
+  for (const token of tokens) {
+    const exact = index.get(token) || []
+    const prefix = []
+    if (!exact.length) {
+      for (const [key, list] of index) {
+        if (key.startsWith(token) || token.startsWith(key)) prefix.push(...list)
+      }
+    }
+    const hits = [...new Set(exact.length ? exact : prefix)]
+    if (hits.length === 1 && hits.length < bestCount) {
+      best = hits[0]
+      bestCount = 1
+    }
+  }
+  return best
+}
+
 export function pickChannelByVoice(channels, spoken, favoriteIds = []) {
   const query = foldSearch(spoken)
   if (!query) return null
+  const unique = uniqueTokenHit(channels, query)
+  if (unique) return unique
   const favSet = new Set(favoriteIds || [])
   const favorites = (channels || []).filter((channel) => favSet.has(channel.id))
   const rest = (channels || []).filter((channel) => !favSet.has(channel.id))
   return pickFromList(favorites, query) || pickFromList(rest, query)
+}
+
+export function channelMatchesQuery(channel, raw) {
+  const query = foldSearch(raw)
+  if (!query) return true
+  const names = [channel.displayName, channel.name, channel.tvgName, String(channel.number || '')]
+    .map(foldSearch)
+    .filter(Boolean)
+  const compactQuery = query.replace(/ /g, '')
+  for (const name of names) {
+    const compact = name.replace(/ /g, '')
+    if (name.includes(query) || compact.includes(compactQuery)) return true
+    if (query.length >= 4 && (name.startsWith(query) || compact.startsWith(compactQuery))) return true
+    if (query.length >= 5 && editDistance(name, query) <= 1) return true
+    if (query.length >= 6 && editDistance(name, query) <= 2) return true
+  }
+  return false
+}
+
+export function groupForPlayingChannel(channel, selectedGroupId, favorites = [], recentIds = []) {
+  if (!channel) return selectedGroupId || 'all'
+  if (selectedGroupId === 'favorites' && favorites.includes(channel.id)) return 'favorites'
+  if (selectedGroupId === 'recent' && recentIds.includes(channel.id)) return 'recent'
+  if (selectedGroupId === 'all') return 'all'
+  if (selectedGroupId && selectedGroupId !== 'favorites' && selectedGroupId !== 'recent' && channel.group === selectedGroupId) {
+    return selectedGroupId
+  }
+  return channel.group || 'all'
 }

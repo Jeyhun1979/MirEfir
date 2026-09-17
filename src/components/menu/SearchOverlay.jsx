@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSpeechSearch } from '../../hooks/useSpeechSearch.js'
-import { channelsForVoice, parseVoiceCommand, pickChannelByVoice, voicePhrasesForChannels, voskGrammarPhrases } from '../../lib/channelMatch.js'
-import { arrowDir, isBackKey, isOkKey } from '../../lib/remoteKeys.js'
+import { parseVoiceCommand, pickChannelByVoice } from '../../lib/channelMatch.js'
+import { arrowDir, isBackKey, isOkKey, isTypingTarget } from '../../lib/remoteKeys.js'
 import { usePlayer } from '../../store/PlayerContext.jsx'
 
 export function SearchOverlay() {
@@ -31,12 +31,6 @@ export function SearchOverlay() {
   const [voiceNote, setVoiceNote] = useState('')
   const [permChoice, setPermChoice] = useState(0)
   const results = visibleChannels.slice(0, 40)
-  const phrases = useMemo(() => {
-    const ordered = channelsForVoice(channels, { favoriteIds: favorites })
-    return voskGrammarPhrases(voicePhrasesForChannels(ordered, 300), 960)
-  }, [channels, favorites])
-  const phrasesRef = useRef(phrases)
-  phrasesRef.current = phrases
 
   const onVoiceText = useCallback(
     (text, meta) => {
@@ -47,7 +41,7 @@ export function SearchOverlay() {
       }
       const parsed = parseVoiceCommand(text, meta.grammar || meta.intent || '')
       const query = parsed.query || text
-      const hit = pickChannelByVoice(channels, query, favorites)
+      const hit = pickChannelByVoice(channels, query, favorites) || pickChannelByVoice(channels, meta?.alt || '', favorites)
       setListMode('live')
       skipCursorReset.current = true
       setVoiceNote('')
@@ -66,13 +60,13 @@ export function SearchOverlay() {
       setSearchQuery(hit?.displayName || query)
       setVoicePickId('')
       setCursor(-1)
-      setRowFocus('mic')
+      setRowFocus('input')
       if (!hit) setVoiceNote('Канал не найден. Скажите «переключи на» и название из списка.')
     },
     [channels, closeOverlays, favorites, selectChannel, setListMode, setSearchQuery],
   )
 
-  const speech = useSpeechSearch(onVoiceText, settings.language === 'en' ? 'en-US' : 'ru-RU', phrasesRef)
+  const speech = useSpeechSearch(onVoiceText)
   const stopSpeech = speech.stop
   const panelRef = useRef(null)
   const openedRef = useRef(false)
@@ -114,11 +108,6 @@ export function SearchOverlay() {
   }, [results, voicePickId])
 
   const startVoice = speech.start
-  useEffect(() => {
-    if (uiScreen !== 'search' || !window.mirefir?.ensureVosk) return undefined
-    window.mirefir.ensureVosk().catch(() => {})
-    return undefined
-  }, [uiScreen])
 
   const beginVoice = () => {
     if (!settings.voiceEnabled) {
@@ -239,6 +228,7 @@ export function SearchOverlay() {
       return
     }
     if (isOkKey(event) && rowFocus === 'mic' && cursor < 0) {
+      if (isTypingTarget(event.target) && event.key !== 'Enter') return
       event.preventDefault()
       event.stopImmediatePropagation()
       beginVoice()
@@ -267,8 +257,10 @@ export function SearchOverlay() {
             value={searchQuery}
             onChange={(event) => {
               setListMode('live')
+              setRowFocus('input')
               setSearchQuery(event.target.value)
             }}
+            onFocus={() => setRowFocus('input')}
             placeholder="Название — найти. «Переключи на …» — включить"
             className={`min-w-0 flex-1 rounded-xl border bg-black/40 px-3 py-2.5 text-sm outline-none ${
               cursor < 0 && rowFocus === 'input' ? 'border-accent' : 'border-white/10'

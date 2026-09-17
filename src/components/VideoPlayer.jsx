@@ -650,7 +650,7 @@ export function VideoPlayer({ fullscreen = false }) {
       )}
 
       {liveGuideOpen || (osFullscreen && !padOn) ? null : (
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-4">
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 p-4">
         <div className="text-sm text-white/90">
           {archive ? 'Архив · ' : ''}
           {archive ? playback?.title || program?.title || 'Архив' : program?.title || 'Прямой эфир'}

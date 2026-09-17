@@ -4,6 +4,7 @@ import { collectGroups, loadPlaylistFromFile, loadPlaylistFromUrl, parseM3U } fr
 import { bindEpgToChannels, loadXmltv, slimXmltv } from '../lib/xmltv.js'
 import { decodeCloudCode, encodeCloudCode, readBackupPayload, shareOrSaveJson } from '../lib/cloudCode.js'
 import { buildCatchupUrl, catchupUrlCandidates, canPlayArchive, channelHasCatchup } from '../lib/catchup.js'
+import { channelMatchesQuery, groupForPlayingChannel } from '../lib/channelMatch.js'
 import { quitApp } from '../lib/quitApp.js'
 import { epgCacheIsFresh, loadEpgCache, readEpgCacheMeta, saveEpgCache, uniqueEpgUrls } from '../lib/epgCache.js'
 import {
@@ -260,8 +261,7 @@ export function PlayerProvider({ children }) {
     }
 
     if (searchQuery.trim()) {
-      const q = searchQuery.trim().toLowerCase()
-      list = channels.filter((channel) => (channel.displayName || channel.name || '').toLowerCase().includes(q))
+      list = channels.filter((channel) => channelMatchesQuery(channel, searchQuery))
     }
 
     const keepFavoriteOrder = selectedGroupId === 'favorites' || listMode === 'favorites'
@@ -496,9 +496,13 @@ export function PlayerProvider({ children }) {
       setStreamOverride(null)
       setSelectedChannelId(channelId)
       setError('')
-      rememberChannel(channels.find((item) => item.id === channelId))
+      const channel = channels.find((item) => item.id === channelId)
+      rememberChannel(channel)
+      if (!channel) return
+      setListMode((mode) => (mode === 'favorites' || mode === 'history' ? 'live' : mode))
+      setSelectedGroupId((current) => groupForPlayingChannel(channel, current, favorites, recentIds))
     },
-    [channels, rememberChannel],
+    [channels, favorites, recentIds, rememberChannel],
   )
 
   const playProgram = useCallback(

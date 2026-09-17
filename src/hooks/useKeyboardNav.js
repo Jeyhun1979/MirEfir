@@ -88,7 +88,10 @@ export function useKeyboardNav() {
       if (liveGuideOpen || isTypingTarget(event.target)) return
       if (!isOkKey(event) && !matchesBinding(event, settings.keys?.fullscreen)) return
       clearOkHold()
-      if (okHeld.current) return
+      if (okHeld.current) {
+        okHeld.current = false
+        return
+      }
       event.preventDefault()
       if (movingFavoriteId) {
         commitFavoriteMove()

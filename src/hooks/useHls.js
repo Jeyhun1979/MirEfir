@@ -2,7 +2,30 @@ import { useEffect, useRef, useState } from 'react'
 import Hls from 'hls.js'
 
 function isHlsUrl(url) {
-  return /\.m3u8(\?|$)/i.test(url) || url.toLowerCase().includes('m3u8')
+  return /\.m3u8(\?|$)/i.test(url) || String(url || '').toLowerCase().includes('m3u8')
+}
+
+function looksLikeProgressiveFile(url) {
+  return /\.(mp4|mkv|avi|webm|mov|mp3|aac)(\?|$)/i.test(String(url || ''))
+}
+
+function shouldUseHls(url) {
+  if (!Hls.isSupported()) return false
+  if (looksLikeProgressiveFile(url)) return false
+  if (isHlsUrl(url)) return true
+  return /^https?:/i.test(String(url || ''))
+}
+
+function preferAvcLevel(hls, levels) {
+  const list = levels || []
+  if (list.length < 2) return
+  const hasHevc = list.some((level) => /hvc1|hev1|hevc/i.test(`${level.videoCodec || ''}`))
+  if (!hasHevc) return
+  const avc = list.findIndex((level) => /avc|h264/i.test(`${level.videoCodec || ''}`))
+  if (avc < 0) return
+  hls.startLevel = avc
+  hls.currentLevel = avc
+  hls.nextLevel = avc
 }
 
 function segmentTimeMs(url) {
@@ -17,21 +40,21 @@ function createEngine(compact = false, bufferSec = 15, vod = false) {
   const live = Math.min(45, Math.max(8, Number(bufferSec) || 15))
   return new Hls({
     enableWorker: true,
-    lowLatencyMode: !vod,
+    lowLatencyMode: false,
     liveDurationInfinity: false,
     backBufferLength: compact ? 8 : vod ? Math.min(90, live * 2) : live,
-    maxBufferLength: compact ? 6 : vod ? Math.min(40, live + 20) : Math.min(20, live),
-    maxMaxBufferLength: compact ? 12 : vod ? Math.min(60, live + 30) : Math.min(30, live + 10),
+    maxBufferLength: compact ? 8 : vod ? Math.min(40, live + 20) : Math.min(24, live + 8),
+    maxMaxBufferLength: compact ? 14 : vod ? Math.min(60, live + 30) : Math.min(36, live + 12),
     capLevelToPlayerSize: compact,
     startLevel: compact ? 0 : -1,
-    liveSyncDurationCount: 1,
-    liveMaxLatencyDurationCount: vod ? 3 : 6,
+    liveSyncDurationCount: vod ? 3 : 3,
+    liveMaxLatencyDurationCount: vod ? 3 : 8,
     startPosition: vod ? 0 : -1,
     startFragPrefetch: true,
     testBandwidth: false,
-    manifestLoadingMaxRetry: 1,
-    levelLoadingMaxRetry: 1,
-    fragLoadingMaxRetry: 2,
+    manifestLoadingMaxRetry: 2,
+    levelLoadingMaxRetry: 2,
+    fragLoadingMaxRetry: 4,
   })
 }
 
@@ -135,7 +158,7 @@ export function useHls(videoRef, src, options = {}) {
       return undefined
     }
 
-    if (isHlsUrl(current) && Hls.isSupported()) {
+    if (shouldUseHls(current)) {
       const hls = createEngine(compact, bufferSec, requireVod)
       hlsRef.current = hls
       hls.attachMedia(video)
@@ -169,15 +192,29 @@ export function useHls(videoRef, src, options = {}) {
 
       let netFails = 0
       let shown = false
+      let waitingSince = 0
+      const recoverLiveEdge = () => {
+        if (id !== requestId.current || !hlsRef.current) return
+        const live = hls.liveSyncPosition
+        try {
+          if (Number.isFinite(live) && live >= 0) video.currentTime = live
+          else hls.recoverMediaError()
+          play()
+        } catch {
+          hls.startLoad()
+        }
+      }
       const firstPicture = () => {
         if (shown || id !== requestId.current) return
         shown = true
+        waitingSince = 0
         setLoading(false)
         setError('')
         play()
       }
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
         netFails = 0
+        preferAvcLevel(hls, data?.levels)
         if (requireVod) {
           try {
             const start = video.seekable?.length ? video.seekable.start(0) : 0
@@ -191,6 +228,17 @@ export function useHls(videoRef, src, options = {}) {
       if (!requireVod && !compact) {
         hls.on(Hls.Events.FRAG_BUFFERED, firstPicture)
         hls.on(Hls.Events.FRAG_CHANGED, firstPicture)
+      }
+      if (Hls.Events.BUFFER_CODECS) {
+        hls.on(Hls.Events.BUFFER_CODECS, (_event, data) => {
+          const audio = data?.audio
+          if (!audio) return
+          const mime = audio.container
+            ? `${audio.container}${audio.codec ? `; codecs="${audio.codec}"` : ''}`
+            : ''
+          const supported = !mime || (typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported?.(mime))
+          if (!supported) delete data.audio
+        })
       }
 
       const checkLive = (details) => {
@@ -206,9 +254,20 @@ export function useHls(videoRef, src, options = {}) {
       })
 
       hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data?.details === Hls.ErrorDetails?.BUFFER_STALLED_ERROR) {
+          recoverLiveEdge()
+          return
+        }
         if (!data?.fatal) return
         if (tryNext()) {
           hls.stopLoad()
+          return
+        }
+        if (!isHlsUrl(current) && !requireVod) {
+          hls.stopLoad()
+          destroyEngine(hlsRef)
+          video.src = current
+          play()
           return
         }
         const status = data.response?.code
@@ -243,6 +302,23 @@ export function useHls(videoRef, src, options = {}) {
       setLoading(true)
       hls.loadSource(current)
       play()
+      const stallWatch = window.setInterval(() => {
+        if (id !== requestId.current) return
+        if (video.paused || video.ended) {
+          waitingSince = 0
+          return
+        }
+        const stuck = video.readyState < 3 && video.currentTime > 0.4
+        if (!stuck) {
+          waitingSince = 0
+          return
+        }
+        if (!waitingSince) waitingSince = Date.now()
+        if (Date.now() - waitingSince >= 3500) {
+          waitingSince = Date.now()
+          recoverLiveEdge()
+        }
+      }, 700)
       const watchdog = window.setTimeout(() => {
         if (id !== requestId.current) return
         if (video.readyState >= 2 || video.currentTime > 0.2) {
@@ -256,6 +332,7 @@ export function useHls(videoRef, src, options = {}) {
       }, 12000)
       return () => {
         window.clearTimeout(watchdog)
+        window.clearInterval(stallWatch)
         liveChecks.forEach((timer) => window.clearTimeout(timer))
       }
     }
