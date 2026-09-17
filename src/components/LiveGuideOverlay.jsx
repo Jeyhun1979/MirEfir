@@ -239,6 +239,8 @@ export function LiveGuideOverlay() {
     const el = channelRef.current
     setScrollTop(el ? keepChannelRowAtMid(el, index) : Math.max(0, index * CHANNEL_ROW - (viewport || 640) / 2 + CHANNEL_ROW / 2))
   }
+
+  const list = useMemo(() => {
     const hidden = settings.hiddenGroups || []
     let next = channels.filter((channel) => !hidden.includes(channel.group))
     if (groupId === 'favorites') next = favorites.map((id) => channels.find((channel) => channel.id === id)).filter(Boolean)
