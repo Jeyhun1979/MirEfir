@@ -1,9 +1,23 @@
-const { app, BrowserWindow, ipcMain, dialog, session, shell } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, session, shell, protocol } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const { pathToFileURL } = require('url')
 const { registerUpdateIpc, isApplyingUpdate, clearInstallLock } = require('./updater.cjs')
-const { ensureWhisper, transcribePcm, cancelWhisper } = require('./whisper.cjs')
+const { cancelWindowsSpeech } = require('./speech.cjs')
+const { ensureVoskModel, registerVoskProtocol, transcribePcm } = require('./vosk.cjs')
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'mirefir-vosk',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+    },
+  },
+])
 
 const DEV_URL = 'http://127.0.0.1:5173'
 const CONFIG_NAME = 'mirefir-config.json'
@@ -195,6 +209,7 @@ app.whenReady().then(() => {
     callback({ requestHeaders: headers })
   })
 
+  registerVoskProtocol(protocol)
   createWindow()
   migrateLegacyProfile()
   registerUpdateIpc()
@@ -428,17 +443,19 @@ ipcMain.handle('app:info', () => ({
   portable: Boolean(process.env.PORTABLE_EXECUTABLE_DIR),
 }))
 
-ipcMain.handle('speech:listen', async () => ({ ok: false, error: 'NO_WHISPER' }))
+ipcMain.handle('speech:listen', async () => ({ ok: false, error: 'NO_VOSK' }))
 ipcMain.handle('speech:transcribe', async (_event, payload) => {
   try {
-    return await transcribePcm(payload)
+    const ready = await ensureVoskModel()
+    if (!ready?.ok) return { ok: false, error: ready?.error || 'NO_VOSK' }
+    return transcribePcm(payload)
   } catch (err) {
-    return { ok: false, error: err.message || 'NO_WHISPER' }
+    return { ok: false, error: err.message || 'NO_VOSK' }
   }
 })
-ipcMain.handle('speech:ensure', async () => ensureWhisper())
+ipcMain.handle('speech:ensure-vosk', async () => ensureVoskModel())
 ipcMain.handle('speech:cancel', () => {
-  cancelWhisper()
+  cancelWindowsSpeech()
   return true
 })
 

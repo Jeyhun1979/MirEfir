@@ -158,6 +158,7 @@ function applyDownloadedFile(filePath) {
   if (!filePath || !fs.existsSync(filePath)) throw new Error('Файл обновления не найден')
   applying = true
   const temp = app.getPath('temp')
+  const bat = path.join(temp, 'mirefir-update.cmd')
   const splash = path.join(temp, 'mirefir-install-splash.ps1')
   const vbs = path.join(temp, 'mirefir-update.vbs')
   const log = path.join(app.getPath('userData'), 'updater.log')
@@ -165,39 +166,73 @@ function applyDownloadedFile(filePath) {
   const exe = process.execPath
   const setup = path.resolve(filePath)
   const dir = path.dirname(exe)
-  const template = splashTemplatePath()
-  if (!fs.existsSync(template)) throw new Error('Нет окна установки')
   markInstallPending()
   unblockDownloaded(setup)
-  const raw = fs.readFileSync(template, 'utf8').replace(/^\uFEFF/, '')
-  fs.writeFileSync(splash, `\uFEFF${raw}`, 'utf8')
 
-  const psExe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
-  const splashCmd = [
-    quote(psExe),
-    '-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File',
-    quote(splash),
-    '-Exe',
-    psArg(exe),
-    '-Dir',
-    psArg(dir),
-    '-Setup',
-    psArg(setup),
-    '-Log',
-    psArg(log),
-    '-Lock',
-    psArg(lock),
-    '-RunSetup',
-  ].join(' ')
-  const setupCmd = `${quote(setup)} /S /NCRC`
-  const vbsBody = [
+  const lines = [
+    '@echo off',
+    'setlocal EnableExtensions',
+    `echo apply-start %date% %time%>>${quote(log)}`,
+    'ping 127.0.0.1 -n 2 >nul',
+    `"%SystemRoot%\\System32\\taskkill.exe" /F /IM MirEfir.exe >>${quote(log)} 2>&1`,
+    'ping 127.0.0.1 -n 2 >nul',
+    `echo running-setup>>${quote(log)}`,
+    `start /wait "" ${quote(setup)} /S /NCRC`,
+    `echo setup-exit %ERRORLEVEL%>>${quote(log)}`,
+    `"%SystemRoot%\\System32\\taskkill.exe" /F /IM MirEfir.exe >>${quote(log)} 2>&1`,
+    'ping 127.0.0.1 -n 3 >nul',
+    'set TRY=0',
+    ':retry',
+    'set /a TRY+=1',
+    'if %TRY% GTR 6 goto failed',
+    `echo launch-try %TRY%>>${quote(log)}`,
+    `start "" /D ${quote(dir)} ${quote(exe)} --updated`,
+    'ping 127.0.0.1 -n 8 >nul',
+    `"%SystemRoot%\\System32\\tasklist.exe" /FI "IMAGENAME eq MirEfir.exe" | "%SystemRoot%\\System32\\find.exe" /I "MirEfir.exe" >nul`,
+    'if not errorlevel 1 goto running',
+    `echo launch-died %TRY%>>${quote(log)}`,
+    'goto retry',
+    ':failed',
+    `echo launch-failed>>${quote(log)}`,
+    'goto cleanup',
+    ':running',
+    `echo relaunched try=%TRY%>>${quote(log)}`,
+    ':cleanup',
+    `del /f /q ${quote(lock)} >nul 2>&1`,
+    `del /f /q ${quote(setup)} >nul 2>&1`,
+    'del /f /q "%~f0" >nul 2>&1',
+  ]
+  fs.writeFileSync(bat, lines.join('\r\n'), 'utf8')
+
+  const template = splashTemplatePath()
+  const vbsLines = [
     'Set sh = CreateObject("WScript.Shell")',
     'On Error Resume Next',
-    `sh.Run ${vbsString(setupCmd)}, 0, False`,
-    `sh.Run ${vbsString(splashCmd)}, 0, False`,
-  ].join('\r\n')
-  fs.writeFileSync(vbs, `${vbsBody}\r\n`, 'utf8')
-  logUpdate('spawn setup then splash')
+    `sh.Run ${JSON.stringify(bat)}, 0, False`,
+  ]
+  if (fs.existsSync(template)) {
+    const raw = fs.readFileSync(template, 'utf8').replace(/^\uFEFF/, '')
+    fs.writeFileSync(splash, `\uFEFF${raw}`, 'utf8')
+    const psExe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    const splashCmd = [
+      quote(psExe),
+      '-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File',
+      quote(splash),
+      '-Exe',
+      psArg(exe),
+      '-Dir',
+      psArg(dir),
+      '-Setup',
+      psArg(setup),
+      '-Log',
+      psArg(log),
+      '-Lock',
+      psArg(lock),
+    ].join(' ')
+    vbsLines.push(`sh.Run ${vbsString(splashCmd)}, 0, False`)
+  }
+  fs.writeFileSync(vbs, `${vbsLines.join('\r\n')}\r\n`, 'utf8')
+  logUpdate(`spawn hidden installer ${setup}`)
   spawn('wscript.exe', ['//B', '//Nologo', vbs], {
     detached: true,
     stdio: 'ignore',
@@ -209,7 +244,7 @@ function applyDownloadedFile(filePath) {
       if (!win.isDestroyed()) win.destroy()
     }
     app.exit(0)
-  }, 2500)
+  }, 800)
   return true
 }
 

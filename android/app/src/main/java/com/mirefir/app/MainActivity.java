@@ -10,7 +10,6 @@ import com.getcapacitor.BridgeActivity;
 public class MainActivity extends BridgeActivity {
   @Override
   public void onCreate(Bundle savedInstanceState) {
-    registerPlugin(WhisperPlugin.class);
     super.onCreate(savedInstanceState);
     hideSystemUi();
   }

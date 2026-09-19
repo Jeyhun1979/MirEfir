@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSpeechSearch } from '../../hooks/useSpeechSearch.js'
-import { parseVoiceCommand, pickChannelByVoice } from '../../lib/channelMatch.js'
+import { channelsForVoice, parseVoiceCommand, pickChannelByVoice, voicePhrasesForChannels, voskGrammarPhrases } from '../../lib/channelMatch.js'
 import { arrowDir, isBackKey, isOkKey, isTypingTarget } from '../../lib/remoteKeys.js'
 import { usePlayer } from '../../store/PlayerContext.jsx'
 
@@ -31,6 +31,12 @@ export function SearchOverlay() {
   const [voiceNote, setVoiceNote] = useState('')
   const [permChoice, setPermChoice] = useState(0)
   const results = visibleChannels.slice(0, 40)
+  const phrases = useMemo(() => {
+    const ordered = channelsForVoice(channels, { favoriteIds: favorites })
+    return voskGrammarPhrases(voicePhrasesForChannels(ordered, 300), 960)
+  }, [channels, favorites])
+  const phrasesRef = useRef(phrases)
+  phrasesRef.current = phrases
 
   const onVoiceText = useCallback(
     (text, meta) => {
@@ -66,7 +72,7 @@ export function SearchOverlay() {
     [channels, closeOverlays, favorites, selectChannel, setListMode, setSearchQuery],
   )
 
-  const speech = useSpeechSearch(onVoiceText)
+  const speech = useSpeechSearch(onVoiceText, settings.language === 'en' ? 'en-US' : 'ru-RU', phrasesRef)
   const stopSpeech = speech.stop
   const panelRef = useRef(null)
   const openedRef = useRef(false)

@@ -55,7 +55,41 @@ function Unblock-Setup {
   try { [IO.File]::Delete("$Setup`:Zone.Identifier") } catch {}
 }
 
+function Start-SetupViaCmd {
+  if (-not $RunSetup) { return }
+  if (-not $Setup -or -not (Test-Path -LiteralPath $Setup)) {
+    Write-Log 'setup-cmd-missing'
+    return
+  }
+  Unblock-Setup
+  $runner = Join-Path $env:TEMP 'mirefir-run-setup.cmd'
+  $logQ = [string]$Log -replace '"', ''
+  $setupQ = [string]$Setup -replace '"', ''
+  $dirQ = [string]$Dir -replace '"', ''
+  $exeQ = [string]$Exe -replace '"', ''
+  $lockQ = [string]$Lock -replace '"', ''
+  $lines = @(
+    '@echo off',
+    'setlocal EnableExtensions',
+    ('echo apply-start %date% %time%>>"{0}"' -f $logQ),
+    ('echo running-setup>>"{0}"' -f $logQ),
+    ('start /wait "" "{0}" /S /NCRC' -f $setupQ),
+    ('echo setup-exit %ERRORLEVEL%>>"{0}"' -f $logQ),
+    ('"%SystemRoot%\System32\taskkill.exe" /F /IM MirEfir.exe >>"{0}" 2>&1' -f $logQ),
+    'ping 127.0.0.1 -n 3 >nul',
+    ('echo launch-try 1>>"{0}"' -f $logQ),
+    ('start "" /D "{0}" "{1}" --updated' -f $dirQ, $exeQ),
+    ('del /f /q "{0}" >nul 2>&1' -f $lockQ)
+  )
+  [IO.File]::WriteAllText($runner, ($lines -join "`r`n") + "`r`n")
+  $cmdExe = Join-Path $env:SystemRoot 'System32\cmd.exe'
+  Start-Process -FilePath $cmdExe -ArgumentList @('/c', $runner) -WindowStyle Hidden | Out-Null
+  $script:setupCmdStarted = $true
+  Write-Log 'setup-cmd-detached'
+}
+
 function Start-SetupNow {
+  if ($script:setupCmdStarted) { return $true }
   if (-not $Setup -or -not (Test-Path -LiteralPath $Setup)) { return $false }
   Unblock-Setup
   Write-Log 'running-setup'
@@ -141,6 +175,8 @@ function Start-Player {
     Write-Log ('launch-wscript-error ' + $_.Exception.Message)
   }
 }
+
+Start-SetupViaCmd
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
