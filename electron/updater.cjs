@@ -146,6 +146,14 @@ function vbsString(value) {
   return `"${String(value).replace(/"/g, '""')}"`
 }
 
+function unblockDownloaded(file) {
+  try {
+    fs.unlinkSync(`${file}:Zone.Identifier`)
+  } catch {
+    /* ignore */
+  }
+}
+
 function applyDownloadedFile(filePath) {
   if (!filePath || !fs.existsSync(filePath)) throw new Error('Файл обновления не найден')
   applying = true
@@ -160,11 +168,12 @@ function applyDownloadedFile(filePath) {
   const template = splashTemplatePath()
   if (!fs.existsSync(template)) throw new Error('Нет окна установки')
   markInstallPending()
+  unblockDownloaded(setup)
   const raw = fs.readFileSync(template, 'utf8').replace(/^\uFEFF/, '')
   fs.writeFileSync(splash, `\uFEFF${raw}`, 'utf8')
 
   const psExe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
-  const command = [
+  const splashCmd = [
     quote(psExe),
     '-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File',
     quote(splash),
@@ -180,8 +189,15 @@ function applyDownloadedFile(filePath) {
     psArg(lock),
     '-RunSetup',
   ].join(' ')
-  fs.writeFileSync(vbs, `CreateObject("WScript.Shell").Run ${vbsString(command)}, 0, False\r\n`, 'utf8')
-  logUpdate(`spawn install splash ${setup}`)
+  const setupCmd = `${quote(setup)} /S /NCRC`
+  const vbsBody = [
+    'Set sh = CreateObject("WScript.Shell")',
+    'On Error Resume Next',
+    `sh.Run ${vbsString(setupCmd)}, 0, False`,
+    `sh.Run ${vbsString(splashCmd)}, 0, False`,
+  ].join('\r\n')
+  fs.writeFileSync(vbs, `${vbsBody}\r\n`, 'utf8')
+  logUpdate('spawn setup then splash')
   spawn('wscript.exe', ['//B', '//Nologo', vbs], {
     detached: true,
     stdio: 'ignore',
@@ -193,7 +209,7 @@ function applyDownloadedFile(filePath) {
       if (!win.isDestroyed()) win.destroy()
     }
     app.exit(0)
-  }, 1600)
+  }, 2500)
   return true
 }
 

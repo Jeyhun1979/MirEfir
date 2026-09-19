@@ -44,24 +44,9 @@
   Pop $0
   nsExec::ExecToLog '"$SYSDIR\netsh.exe" advfirewall firewall add rule name="MirEfir Out" dir=out action=allow program="$INSTDIR\MirEfir.exe" enable=yes profile=any'
   Pop $0
-  IfFileExists "$INSTDIR\resources\install-splash.ps1" 0 mirefir_after_splash
-    CopyFiles /SILENT "$INSTDIR\resources\install-splash.ps1" "$TEMP\install-splash.ps1"
-    FileOpen $0 "$TEMP\mirefir-nsis-splash.vbs" w
-    FileWrite $0 'Set sh = CreateObject("WScript.Shell")$\r$\n'
-    FileWrite $0 'sh.Run "powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File ""'
-    FileWrite $0 "$TEMP\install-splash.ps1"
-    FileWrite $0 '"" -Exe ""'
-    FileWrite $0 "$INSTDIR\MirEfir.exe"
-    FileWrite $0 '"" -Dir ""'
-    FileWrite $0 "$INSTDIR"
-    FileWrite $0 '"" -Log ""'
-    FileWrite $0 "$APPDATA\MirEfir\updater.log"
-    FileWrite $0 '"" -Lock ""'
-    FileWrite $0 "$APPDATA\MirEfir\installing.lock"
-    FileWrite $0 '"", 0, False$\r$\n'
-    FileClose $0
-    ExecShell "open" "$SYSDIR\wscript.exe" '//B //Nologo "$TEMP\mirefir-nsis-splash.vbs"' SW_HIDE
-  mirefir_after_splash:
+  ; Silent update: the player splash already started Setup and will relaunch.
+  ; Do not spawn a second helper that can kill the new window.
+  IfSilent mirefir_after_post
   IfFileExists "$INSTDIR\resources\post-launch.vbs" 0 mirefir_after_post
     CopyFiles /SILENT "$INSTDIR\resources\post-launch.vbs" "$TEMP\mirefir-post-launch.vbs"
     FileOpen $0 "$TEMP\mirefir-post-run.vbs" w

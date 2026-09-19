@@ -231,6 +231,16 @@ function cancelWhisper() {
   }
 }
 
+function stopChild(child) {
+  if (!child?.pid) return
+  try {
+    if (process.platform === 'win32') spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true })
+    else child.kill('SIGKILL')
+  } catch {
+    /* already gone */
+  }
+}
+
 function runCli(args, cwd) {
   return new Promise((resolve, reject) => {
     const cli = findCli()
@@ -242,17 +252,30 @@ function runCli(args, cwd) {
     currentChild = child
     let out = ''
     let err = ''
+    let settled = false
+    const finish = (ok, value) => {
+      if (settled) return
+      settled = true
+      if (currentChild === child) currentChild = null
+      stopChild(child)
+      if (ok) resolve(value)
+      else reject(value instanceof Error ? value : new Error(String(value || 'whisper failed')))
+    }
+    const takeText = () => {
+      if (textFromJson(path.join(cwd, 'out.json')) || textFromStdout(out)) finish(true, out)
+    }
     child.stdout.on('data', (chunk) => {
       out += chunk.toString()
+      takeText()
     })
     child.stderr.on('data', (chunk) => {
       err += chunk.toString()
     })
-    child.on('error', reject)
+    child.on('error', (error) => finish(false, error))
     child.on('close', (code) => {
-      if (currentChild === child) currentChild = null
-      if (code === 0 || out || fs.existsSync(path.join(cwd, 'out.json'))) resolve(out)
-      else reject(new Error(err.trim() || `whisper failed (${code})`))
+      if (settled) return
+      if (code === 0 || out || fs.existsSync(path.join(cwd, 'out.json'))) finish(true, out)
+      else finish(false, err.trim() || `whisper failed (${code})`)
     })
   })
 }
@@ -300,10 +323,10 @@ async function transcribePcm(payload = {}) {
   const wav = path.join(dir, 'speech.wav')
   const outBase = path.join(dir, 'out')
   writeWav(wav, pcm, sampleRate)
-  const threads = Math.max(1, Math.min(4, os.cpus()?.length || 2))
+  const threads = Math.max(2, Math.min(8, os.cpus()?.length || 2))
   try {
     const stdout = await runCli(
-      ['-m', modelPath(), '-f', wav, '-l', 'auto', '-nt', '-np', '-t', String(threads), '-oj', '-of', outBase],
+      ['-m', modelPath(), '-f', wav, '-l', 'auto', '-nt', '-nf', '-bs', '1', '-t', String(threads), '-oj', '-of', outBase],
       dir,
     )
     const text = textFromJson(`${outBase}.json`) || textFromStdout(stdout)
