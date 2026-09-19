@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { siblingStreamUrls } from '../lib/channelMatch.js'
 import { formatRange } from '../lib/epg.js'
 import { useClock } from '../hooks/useClock.js'
 import { useHls } from '../hooks/useHls.js'
@@ -40,6 +41,7 @@ export function VideoPlayer({ fullscreen = false }) {
   const videoRef = useRef(null)
   const now = useClock(1000)
   const {
+    channels,
     selectedChannel,
     streamUrl,
     playback,
@@ -77,8 +79,9 @@ export function VideoPlayer({ fullscreen = false }) {
   const program = getCurrentProgram(selectedChannel)
   const nextProgram = getNextProgram(selectedChannel)
   const pauseForMulti = uiScreen === 'multiview' && !recordingActive
+  const liveFallbacks = siblingStreamUrls(selectedChannel, channels)
   const { loading } = useHls(videoRef, pauseForMulti ? '' : streamUrl, {
-    fallbacks: pauseForMulti ? [] : playback?.urls || [],
+    fallbacks: pauseForMulti ? [] : [...(playback?.urls || []), ...(playback?.mode === 'archive' ? [] : liveFallbacks)],
     bufferSec: playback?.mode === 'archive' ? 45 : settings.bufferSec,
     requireVod: playback?.mode === 'archive',
     liveUrl: selectedChannel?.url || '',

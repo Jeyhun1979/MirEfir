@@ -1,7 +1,7 @@
 {
   "name": "mirefir",
   "private": true,
-  "version": "1.0.21",
+  "version": "1.0.22",
   "author": "MirEfir",
   "description": "IPTV player for Windows, Linux and Android",
   "main": "electron/main.cjs",
@@ -14,7 +14,7 @@
     "electron:build": "vite build && electron-builder",
     "cap:sync": "vite build && npx cap sync",
     "android:open": "npx cap open android",
-    "android:apk": "vite build && npx cap sync && cd android && .\\gradlew.bat assembleDebug"
+    "android:apk": "vite build && npx cap sync && cd android && .\\gradlew.bat assembleRelease"
   },
   "dependencies": {
     "@capacitor/android": "^7.4.3",
@@ -51,6 +51,10 @@
       {
         "from": "electron/installSplash.ps1",
         "to": "install-splash.ps1"
+      },
+      {
+        "from": "electron/postLaunch.vbs",
+        "to": "post-launch.vbs"
       }
     ],
     "win": {

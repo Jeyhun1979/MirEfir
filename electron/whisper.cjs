@@ -212,17 +212,22 @@ async function ensureWhisper() {
 }
 
 function cancelWhisper() {
-  if (!currentChild?.pid) {
-    currentChild = null
-    return
-  }
   const child = currentChild
   currentChild = null
-  try {
-    if (process.platform === 'win32') spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true })
-    else child.kill('SIGKILL')
-  } catch {
-    /* already gone */
+  if (child?.pid) {
+    try {
+      if (process.platform === 'win32') spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true })
+      else child.kill('SIGKILL')
+    } catch {
+      /* already gone */
+    }
+  }
+  if (process.platform === 'win32') {
+    try {
+      spawn('taskkill', ['/IM', 'whisper-cli.exe', '/F'], { windowsHide: true })
+    } catch {
+      /* none running */
+    }
   }
 }
 

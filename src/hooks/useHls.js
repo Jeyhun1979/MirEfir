@@ -16,16 +16,45 @@ function shouldUseHls(url) {
   return /^https?:/i.test(String(url || ''))
 }
 
-function preferAvcLevel(hls, levels) {
+function codecSupported(mime) {
+  if (!mime) return true
+  try {
+    return Boolean(typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported?.(mime))
+  } catch {
+    return false
+  }
+}
+
+function audioCanPlay(codec, mime) {
+  const raw = `${codec || ''} ${mime || ''}`.toLowerCase()
+  if (/ac-3|ec-3|eac3|dts/.test(raw)) return codecSupported(mime)
+  if (/mp4a\.40\.2|mp4a\.40\.5|mp4a\.40\.29|opus/.test(raw)) return true
+  if (/\baac\b/.test(raw) && !/ac-3|ec-3/.test(raw)) return true
+  if (/mp2|mpga|\bmp1\b|mpeg-?[12]|mp4a\.40\.34|\bmp3\b|audio\/mpeg/.test(raw)) return false
+  return !mime || codecSupported(mime)
+}
+
+function preferPlayableLevel(hls, levels) {
   const list = levels || []
-  if (list.length < 2) return
-  const hasHevc = list.some((level) => /hvc1|hev1|hevc/i.test(`${level.videoCodec || ''}`))
-  if (!hasHevc) return
-  const avc = list.findIndex((level) => /avc|h264/i.test(`${level.videoCodec || ''}`))
-  if (avc < 0) return
-  hls.startLevel = avc
-  hls.currentLevel = avc
-  hls.nextLevel = avc
+  if (!list.length) return
+  const score = (level) => {
+    const video = `${level.videoCodec || ''}`
+    const audio = `${level.audioCodec || ''}`
+    let value = 0
+    if (/avc|h264/i.test(video)) value += 4
+    if (/hvc1|hev1|hevc/i.test(video)) value += codecSupported(`video/mp4; codecs="${video}"`) ? 3 : 0
+    if (/mp4a|aac/i.test(audio)) value += 3
+    if (/mp4a\.40\.34|mp3|mpga|mp2|ac-3|ec-3|eac3/i.test(audio)) value += 1
+    return value
+  }
+  let best = 0
+  for (let i = 1; i < list.length; i += 1) {
+    if (score(list[i]) > score(list[best])) best = i
+  }
+  if (list.length < 2 && best === 0) return
+  hls.startLevel = best
+  hls.currentLevel = best
+  hls.nextLevel = best
 }
 
 function segmentTimeMs(url) {
@@ -191,6 +220,8 @@ export function useHls(videoRef, src, options = {}) {
       }
 
       let netFails = 0
+      let mediaFails = 0
+      let liveEndedTries = 0
       let shown = false
       let waitingSince = 0
       const recoverLiveEdge = () => {
@@ -214,7 +245,7 @@ export function useHls(videoRef, src, options = {}) {
       }
       hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
         netFails = 0
-        preferAvcLevel(hls, data?.levels)
+        preferPlayableLevel(hls, data?.levels)
         if (requireVod) {
           try {
             const start = video.seekable?.length ? video.seekable.start(0) : 0
@@ -233,11 +264,12 @@ export function useHls(videoRef, src, options = {}) {
         hls.on(Hls.Events.BUFFER_CODECS, (_event, data) => {
           const audio = data?.audio
           if (!audio) return
+          const codec = `${audio.codec || ''}`
           const mime = audio.container
-            ? `${audio.container}${audio.codec ? `; codecs="${audio.codec}"` : ''}`
+            ? `${audio.container}${codec ? `; codecs="${codec}"` : ''}`
             : ''
-          const supported = !mime || (typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported?.(mime))
-          if (!supported) delete data.audio
+          if (audioCanPlay(codec, mime)) return
+          delete data.audio
         })
       }
 
@@ -290,6 +322,11 @@ export function useHls(videoRef, src, options = {}) {
           return
         }
         if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          mediaFails += 1
+          if (mediaFails > 1 && tryNext()) {
+            hls.stopLoad()
+            return
+          }
           hls.recoverMediaError()
           return
         }
@@ -297,6 +334,14 @@ export function useHls(videoRef, src, options = {}) {
         setLoading(false)
         if (requireVod) onUnavailableRef.current?.()
       })
+
+      const onEnded = () => {
+        if (id !== requestId.current || requireVod) return
+        if (liveEndedTries >= 1) return
+        liveEndedTries += 1
+        recoverLiveEdge()
+      }
+      video.addEventListener('ended', onEnded)
 
       setError('')
       setLoading(true)
@@ -331,6 +376,7 @@ export function useHls(videoRef, src, options = {}) {
         if (requireVod) onUnavailableRef.current?.()
       }, 12000)
       return () => {
+        video.removeEventListener('ended', onEnded)
         window.clearTimeout(watchdog)
         window.clearInterval(stallWatch)
         liveChecks.forEach((timer) => window.clearTimeout(timer))

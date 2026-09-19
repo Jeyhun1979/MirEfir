@@ -49,13 +49,57 @@ function Stop-Player {
   Get-Process -Name 'MirEfir' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 }
 
+function Remove-LaunchTask {
+  try {
+    $svc = New-Object -ComObject Schedule.Service
+    $svc.Connect()
+    $svc.GetFolder('\').DeleteTask('MirEfirPostInstall', 0)
+  } catch {}
+}
+
 function Start-Player {
+  try {
+    $svc = New-Object -ComObject Schedule.Service
+    $svc.Connect()
+    $folder = $svc.GetFolder('\')
+    $task = $svc.NewTask(0)
+    $task.Settings.StartWhenAvailable = $true
+    $task.Settings.DisallowStartIfOnBatteries = $false
+    $task.Settings.StopIfGoingOnBatteries = $false
+    $task.Settings.AllowDemandStart = $true
+    $task.Settings.MultipleInstances = 0
+    $task.Settings.ExecutionTimeLimit = 'PT2M'
+    $task.Principal.LogonType = 3
+    $task.Principal.RunLevel = 0
+    $action = $task.Actions.Create(0)
+    $action.Path = $Exe
+    $action.Arguments = '--updated'
+    $action.WorkingDirectory = $Dir
+    $folder.RegisterTaskDefinition('MirEfirPostInstall', $task, 6, $null, $null, 3) | Out-Null
+    $folder.GetTask('MirEfirPostInstall').Run($null) | Out-Null
+    Write-Log 'launch-scheduled-ok'
+    return
+  } catch {
+    Write-Log ('launch-scheduled-error ' + $_.Exception.Message)
+  }
+  try {
+    $line = '"{0}" --updated' -f $Exe
+    $result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+      CommandLine = $line
+      CurrentDirectory = $Dir
+    }
+    Write-Log ('launch-wmi ' + $result.ReturnValue)
+    if ([int]$result.ReturnValue -eq 0) { return }
+  } catch {
+    Write-Log ('launch-wmi-error ' + $_.Exception.Message)
+  }
   $info = New-Object System.Diagnostics.ProcessStartInfo
   $info.FileName = $Exe
   $info.WorkingDirectory = $Dir
   $info.Arguments = '--updated'
   $info.UseShellExecute = $true
   [System.Diagnostics.Process]::Start($info) | Out-Null
+  Write-Log 'launch-shellexecute'
 }
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -165,7 +209,7 @@ try {
   for ($try = 1; $try -le 6; $try++) {
     Write-Log ("launch-try " + $try)
     try { Start-Player } catch { Write-Log ("launch-error " + $_.Exception.Message) }
-    $deadline = (Get-Date).AddSeconds(8)
+    $deadline = (Get-Date).AddSeconds(12)
     $seen = $false
     while ((Get-Date) -lt $deadline) {
       Pump
@@ -176,7 +220,7 @@ try {
       }
     }
     if ($seen) {
-      $stableUntil = (Get-Date).AddSeconds(4)
+      $stableUntil = (Get-Date).AddSeconds(8)
       while ((Get-Date) -lt $stableUntil) {
         Pump
         Start-Sleep -Milliseconds 250
@@ -207,6 +251,7 @@ try {
   }
 } finally {
   $timer.Stop()
+  Remove-LaunchTask
   try { if ($Setup -and (Test-Path -LiteralPath $Setup)) { Remove-Item -LiteralPath $Setup -Force -ErrorAction SilentlyContinue } } catch {}
   try { if ($Lock -and (Test-Path -LiteralPath $Lock)) { Remove-Item -LiteralPath $Lock -Force -ErrorAction SilentlyContinue } } catch {}
   Write-Log 'splash-end'

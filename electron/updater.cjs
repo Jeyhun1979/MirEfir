@@ -180,7 +180,7 @@ function applyDownloadedFile(filePath) {
     psArg(lock),
     '-RunSetup',
   ].join(' ')
-  fs.writeFileSync(vbs, `CreateObject("WScript.Shell").Run ${vbsString(command)}, 1, False\r\n`, 'utf8')
+  fs.writeFileSync(vbs, `CreateObject("WScript.Shell").Run ${vbsString(command)}, 0, False\r\n`, 'utf8')
   logUpdate(`spawn install splash ${setup}`)
   spawn('wscript.exe', ['//B', '//Nologo', vbs], {
     detached: true,

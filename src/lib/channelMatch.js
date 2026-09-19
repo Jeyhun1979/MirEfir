@@ -278,6 +278,14 @@ export function pickChannelByVoice(channels, spoken, favoriteIds = []) {
   return pickFromList(favorites, query) || pickFromList(rest, query)
 }
 
+export function siblingStreamUrls(channel, channels) {
+  const key = foldSearch(channel?.displayName || channel?.name)
+  if (!key || !channel) return []
+  return (channels || [])
+    .filter((item) => item?.url && item.id !== channel.id && foldSearch(item.displayName || item.name) === key)
+    .map((item) => item.url)
+}
+
 export function channelMatchesQuery(channel, raw) {
   const query = foldSearch(raw)
   if (!query) return true
