@@ -1,0 +1,86 @@
+apply plugin: 'com.android.application'
+
+/*
+ * Подпись релиза: тот же ключ, что у 1.0.24 (SHA-256 bbb51b43…a7ac51), иначе APK не встанет поверх старого.
+ * Пароли лежат в native/android/keystore.properties (не в git), файл ключа — app/mirefir-release.jks.
+ */
+def keystoreFile = rootProject.file('keystore.properties')
+def keystoreProps = new Properties()
+if (keystoreFile.exists()) keystoreFile.withInputStream { keystoreProps.load(it) }
+
+android {
+    namespace 'com.mirefir.nativedev'
+    compileSdk 35
+    defaultConfig {
+        // com.mirefir.app — как у 1.0.24, иначе установка поверх старой версии невозможна
+        applicationId project.findProperty('appId') ?: 'com.mirefir.app'
+        minSdk 24
+        targetSdk 35
+        versionCode 26 // у 1.0.24 было 25
+        versionName '1.0.25'
+        ndk {
+            abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86_64'
+        }
+    }
+    packaging {
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+    signingConfigs {
+        release {
+            if (keystoreFile.exists()) {
+                storeFile file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
+    }
+    buildTypes {
+        debug {
+            minifyEnabled false
+        }
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+    // Имя файла для GitHub-релиза: MirEfir-<версия>.apk (так его ищет автообновление)
+    applicationVariants.all { variant ->
+        if (variant.buildType.name == 'release') {
+            variant.outputs.all { outputFileName = "MirEfir-${variant.versionName}.apk" }
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    lint {
+        abortOnError false
+    }
+}
+
+// Релиз без ключа молча подписал бы APK не тем — лучше остановить сборку
+gradle.taskGraph.whenReady { graph ->
+    if (graph.allTasks.any { it.name == 'assembleRelease' || it.name == 'bundleRelease' } && !keystoreFile.exists()) {
+        throw new GradleException('Нет native/android/keystore.properties и app/mirefir-release.jks (резерв: MirEfir-release-key на рабочем столе)')
+    }
+}
+
+dependencies {
+    implementation 'androidx.media3:media3-exoplayer:1.7.1'
+    implementation 'androidx.media3:media3-exoplayer-hls:1.7.1'
+    implementation 'androidx.media3:media3-exoplayer-rtsp:1.7.1'
+    implementation 'androidx.media3:media3-datasource:1.7.1'
+    implementation 'androidx.media3:media3-decoder:1.7.1'
+    implementation 'io.github.anilbeesetti:nextlib-media3ext:1.7.1-0.9.0'
+    implementation 'androidx.annotation:annotation:1.8.2'
+    implementation 'com.googlecode.soundlibs:jlayer:1.0.1-1'
+    implementation 'androidx.core:core:1.13.1'
+    implementation('com.alphacephei:vosk-android:0.3.45') {
+        exclude group: 'net.java.dev.jna', module: 'jna'
+    }
+    /* JNA с нативной libjnidispatch.so для Android (aar), иначе Vosk не стартует: UnsatisfiedLinkError */
+    implementation 'net.java.dev.jna:jna:5.13.0@aar'
+}

@@ -1,21 +1,33 @@
-node_modules
-dist
-release
 .DS_Store
 *.log
 .idea
 .vscode
 .env
 .env.*
-android/.gradle
-android/app/build
-android/build
-android/local.properties
-android/keystore.properties
-android/app/mirefir-release.jks
+
+# Подпись Android: ключ и пароли только локально, резерв — папка MirEfir-release-key на рабочем столе
 *.jks
-android/captures
-android/.idea
-android/app/src/main/assets/public
-android/app/src/main/assets/capacitor.config.json
-android/app/src/main/assets/capacitor.plugins.json
+*.keystore
+keystore.properties
+
+# Windows: компилятор, сборка, плеер и готовые Setup не в git
+native/windows/tools/
+native/windows/bin/
+native/windows/dist/
+native/windows/vendor/mpv/**
+!native/windows/vendor/mpv/.gitkeep
+
+# Android
+native/android/.gradle/
+native/android/.kotlin/
+native/android/build/
+native/android/app/build/
+native/android/local.properties
+native/android/.idea/
+
+# Данные профиля при отладке
+mirefir-config.json
+sources.json
+settings.json
+**/playlist.m3u
+**/epg.bin
