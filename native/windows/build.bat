@@ -27,7 +27,7 @@ if exist "%~dp0vendor\mpv\mpv.exe" (
   if exist "%~dp0vendor\mpv\vulkan-1.dll" copy /Y "%~dp0vendor\mpv\vulkan-1.dll" "%~dp0bin\mpv\vulkan-1.dll" >nul
   if exist "%~dp0vendor\mpv\d3dcompiler_43.dll" copy /Y "%~dp0vendor\mpv\d3dcompiler_43.dll" "%~dp0bin\mpv\d3dcompiler_43.dll" >nul
 )
-"%ZIG%" cc src\main.c src\json.c src\profile.c src\http.c src\playlist.c src\player.c src\device.c src\shell.c src\epg.c src\catchup.c src\rec.c src\voice.c src\i18n.c src\logo.c src\update.c src\tinf\tinflate.c src\tinf\tinfgzip.c src\tinf\tinfcrc32.c src\mirefir.rc -I src\tinf -o bin\mirefir.exe -target x86_64-windows-gnu -luser32 -lgdi32 -lshell32 -lcomdlg32 -lole32 -luuid -ldxgi -ladvapi32 -lwindowscodecs -lwinhttp -lwinmm -municode -O2 -Wl,--subsystem,windows
+"%ZIG%" cc src\main.c src\json.c src\profile.c src\http.c src\playlist.c src\player.c src\device.c src\shell.c src\epg.c src\catchup.c src\rec.c src\voice.c src\i18n.c src\logo.c src\update.c src\gzipenc.c src\tinf\tinflate.c src\tinf\tinfgzip.c src\tinf\tinfcrc32.c src\mirefir.rc -I src\tinf -o bin\mirefir.exe -target x86_64-windows-gnu -luser32 -lgdi32 -lshell32 -lcomdlg32 -lole32 -luuid -ldxgi -ladvapi32 -lwindowscodecs -lwinhttp -lwinmm -lmapi32 -municode -O2 -Wl,--subsystem,windows
 if errorlevel 1 exit /b 1
 echo Built bin\mirefir.exe
 exit /b 0

@@ -1,6 +1,7 @@
 #include "app.h"
 #include <shellapi.h>
 #include <winreg.h>
+#include <mapi.h>
 
 enum { UI_LIVE, UI_PAD, UI_MENU, UI_GUIDE, UI_EXIT, UI_NOTE };
 enum { VIEW_CHANNELS, VIEW_CATEGORIES, VIEW_GROUPS, VIEW_SCHEDULE };
@@ -16,8 +17,36 @@ enum { SHARE_COPY = 0, SHARE_TG = 1, SHARE_WA = 2, SHARE_MAX = 3, SHARE_MAIL = 4
 enum { CHM_OFF, CHM_MENU, CHM_MOVE };
 #define HOLD_MS 550
 enum { SET_TAB_N = 11, SET_ROW_MAX = 160 };
-enum { ACT_NONE, ACT_PL, ACT_EPG, ACT_URL };
+enum { ACT_NONE, ACT_PL, ACT_EPG, ACT_URL, ACT_SEARCH };
 enum { AID_USE, AID_PRI, AID_FB, AID_PASTE, AID_COPY, AID_DEL, AID_SEL };
+
+#ifndef VK_GAMEPAD_A
+#define VK_GAMEPAD_A 0xC3
+#define VK_GAMEPAD_B 0xC4
+#define VK_GAMEPAD_X 0xC5
+#define VK_GAMEPAD_Y 0xC6
+#define VK_GAMEPAD_DPAD_UP 0xCB
+#define VK_GAMEPAD_DPAD_DOWN 0xCC
+#define VK_GAMEPAD_DPAD_LEFT 0xCD
+#define VK_GAMEPAD_DPAD_RIGHT 0xCE
+#define VK_GAMEPAD_MENU 0xCF
+#define VK_GAMEPAD_VIEW 0xD0
+#endif
+#ifndef APPCOMMAND_BROWSER_BACKWARD
+#define APPCOMMAND_BROWSER_BACKWARD 1
+#define APPCOMMAND_BROWSER_SEARCH 5
+#define APPCOMMAND_BROWSER_HOME 7
+#define APPCOMMAND_VOLUME_MUTE 8
+#define APPCOMMAND_MEDIA_STOP 13
+#define APPCOMMAND_MEDIA_PLAY_PAUSE 14
+#define APPCOMMAND_MEDIA_PLAY 46
+#define APPCOMMAND_MEDIA_PAUSE 47
+#define APPCOMMAND_MEDIA_RECORD 48
+#define APPCOMMAND_MEDIA_FAST_FORWARD 49
+#define APPCOMMAND_MEDIA_REWIND 50
+#define APPCOMMAND_MEDIA_CHANNEL_UP 51
+#define APPCOMMAND_MEDIA_CHANNEL_DOWN 52
+#endif
 
 static const wchar_t kUiClass[] = L"MirEfirUi";
 static const char *kMenuId[] = {"live", "guide", "recordings", "multiview", "search", "microphone", "playlists", "history", "settings", "exit"};
@@ -99,6 +128,7 @@ static int g_ask_i;
 static int g_share_i;
 static int g_share_n;
 static int g_share_kind[6];
+static int g_share_file;
 static int g_mv_ch[4];
 static int g_mv_n;
 static int g_mv_i;
@@ -164,7 +194,7 @@ static void fill_round_rect(HDC mem, RECT r, COLORREF c);
 static void hi_rgb(int *r, int *g, int *b);
 static void theme_rgb(int *r, int *g, int *b);
 static void persist_ui(int look, int play, int epg);
-static void open_share(void);
+static void open_share(int file);
 static void apply_share(void);
 static void backup_back_to_data(void);
 static int start_tile(int slot);
@@ -194,6 +224,9 @@ static int enter_folder(void);
 static void ask_group_pin(int gi);
 static void run_setup_row(void);
 static void open_ch_menu(void);
+static void do_backup_export(void);
+static void do_backup_import(void);
+static int open_context(void);
 
 static HWND make_ui(HWND parent, int vis, int pass) {
   DWORD ex = WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_LAYERED;
@@ -1085,7 +1118,7 @@ enum {
   SID_LOGO, SID_GROWS, SID_TWOLINE, SID_CLOCKPOS, SID_CLOCKSZ, SID_CLOCKOP, SID_PROG,
   SID_AUTOPLAY, SID_REMVOL, SID_EXTPL, SID_AUDIO, SID_REC, SID_RECPATH, SID_PARENTAL,
   SID_LOCKSET, SID_PIN, SID_LANG, SID_CLOUD_COPY, SID_CLOUD_PASTE, SID_EXPORT, SID_IMPORT,
-  SID_RESET, SID_KEY, SID_HIDEGRP, SID_LOCKGRP, SID_CLOUD_SHARE, SID_ADD_PRI, SID_ADD_FB, SID_UPDATE,
+  SID_RESET, SID_KEY, SID_HIDEGRP, SID_LOCKGRP, SID_CLOUD_SHARE, SID_BACKUP_SHARE, SID_ADD_PRI, SID_ADD_FB, SID_UPDATE,
   SID_HEAD
 };
 
@@ -1626,6 +1659,17 @@ static void open_url_field_menu(void) {
   if (g_menu) InvalidateRect(g_menu, NULL, FALSE);
 }
 
+static void open_search_field_menu(void) {
+  g_act = ACT_SEARCH;
+  g_act_i = 0;
+  g_act_cur = 0;
+  g_act_n = 0;
+  act_add(AID_PASTE, i18n("urlPaste"));
+  act_add(AID_COPY, i18n("copy"));
+  act_add(AID_SEL, i18n("selAll"));
+  if (g_menu) InvalidateRect(g_menu, NULL, FALSE);
+}
+
 static void save_epg_change(int reload) {
   if (!g_st) return;
   profile_sync_epg(g_st);
@@ -1636,8 +1680,24 @@ static void save_epg_change(int reload) {
 static void run_act(int which) {
   if (which < 0 || which >= g_act_n) return;
   int id = g_act_id[which];
-  if (g_act == ACT_URL) {
-    if (id == AID_PASTE) url_paste_field();
+  if (g_act == ACT_URL || g_act == ACT_SEARCH) {
+    if (g_act == ACT_SEARCH) {
+      if (id == AID_PASTE) {
+        char clip[sizeof g_search];
+        if (clipboard_read_utf8(clip, (int)sizeof clip) && clip[0]) {
+          snprintf(g_search, sizeof g_search, "%s", clip);
+          fill_search();
+        }
+      } else if (id == AID_COPY) {
+        if (g_search[0]) {
+          clipboard_write_utf8(g_search);
+          set_note(L"Скопировано");
+        }
+      } else if (id == AID_SEL) {
+        g_search_focus = 0;
+        g_hit_i = -1;
+      }
+    } else if (id == AID_PASTE) url_paste_field();
     else if (id == AID_COPY) {
       if (g_url_edit[0]) {
         clipboard_write_utf8(g_url_edit);
@@ -1968,6 +2028,7 @@ static void fill_set_rows(void) {
     case 9:
       add_row(SID_CLOUD_COPY, i18n("setCloudCopy"), i18n("setCloudHint"));
       add_row(SID_CLOUD_SHARE, i18n("setCloudShare"), i18n("setCloudShareHint"));
+      add_row(SID_BACKUP_SHARE, i18n("setBackupShare"), i18n("setBackupShareHint"));
       add_row(SID_CLOUD_PASTE, i18n("setCloudPaste"), L"");
       add_row(SID_EXPORT, i18n("setExport"), i18n("setExportHint"));
       add_row(SID_IMPORT, i18n("setImport"), i18n("setImportHint"));
@@ -2319,19 +2380,26 @@ static void activate_set_row(void) {
       else set_note(i18n("codeCopyFail"));
       break;
     case SID_CLOUD_SHARE:
-      open_share();
+      open_share(0);
+      break;
+    case SID_BACKUP_SHARE:
+      open_share(1);
       break;
     case SID_CLOUD_PASTE: {
-      char code[8192];
-      if (!clipboard_read_utf8(code, (int)sizeof code) || !code[0]) {
+      char *code = (char *)malloc(65536);
+      if (!code) break;
+      if (!clipboard_read_utf8_full(code, 65536) || !code[0]) {
+        free(code);
         set_note(i18n("codeNeed"));
         break;
       }
       set_note(i18n("codeApply"));
       if (!cloud_apply_code(g_st, g_pl, code)) {
+        free(code);
         set_note(i18n("codeBad"));
         break;
       }
+      free(code);
       rebuild_groups();
       remember_group(0);
       fill_group(0);
@@ -2342,18 +2410,10 @@ static void activate_set_row(void) {
       break;
     }
     case SID_EXPORT:
-      g_ask_why = 2;
-      g_ask_i = 0;
-      g_menu_page = MENU_ASKREC;
-      layout(g_host);
-      if (g_menu) InvalidateRect(g_menu, NULL, FALSE);
+      do_backup_export();
       break;
     case SID_IMPORT:
-      g_ask_why = 3;
-      g_ask_i = 0;
-      g_menu_page = MENU_ASKREC;
-      layout(g_host);
-      if (g_menu) InvalidateRect(g_menu, NULL, FALSE);
+      do_backup_import();
       break;
     case SID_RESET:
       profile_reset_settings(g_st);
@@ -2748,6 +2808,26 @@ static void paint_search_card(HDC mem, RECT rc) {
     utf8_to_wide(nowt, sub, 160);
     paint_row(mem, item, s0 + i == g_hit_i, title, sub);
   }
+  if (g_act == ACT_SEARCH && g_act_n) {
+    int aw = 320, ah = 16 + g_act_n * 44;
+    int ax = card.left + 24, ay = card.top + 112;
+    if (ay + ah > card.bottom - 8) ay = card.bottom - ah - 8;
+    g_act_x = ax;
+    g_act_y = ay;
+    g_act_w = aw;
+    g_act_row = 44;
+    RECT box = {ax, ay, ax + aw, ay + ah};
+    HBRUSH pop = CreateSolidBrush(RGB(8, 10, 16));
+    FillRect(mem, &box, pop);
+    DeleteObject(pop);
+    HBRUSH edge = CreateSolidBrush(RGB(50, 62, 82));
+    FrameRect(mem, &box, edge);
+    DeleteObject(edge);
+    for (int i = 0; i < g_act_n; i++) {
+      RECT item = {ax, ay + 8 + i * 44, ax + aw, ay + 8 + (i + 1) * 44};
+      draw_item(mem, &item, i == g_act_cur, g_act_title[i], NULL);
+    }
+  }
 }
 
 static void paint_multi_overlay(HDC mem, RECT rc) {
@@ -3033,7 +3113,8 @@ static void paint_extra(HDC mem, RECT rc) {
     return;
   }
   if (g_menu_page == MENU_SHARE) {
-    paint_extra_list(mem, rc, i18n("shareTitle"), i18n("shareHint"));
+    paint_extra_list(mem, rc, i18n(g_share_file ? "shareTitleFile" : "shareTitle"),
+                     i18n(g_share_file ? "shareHintFile" : "shareHint"));
     for (int i = 0; i < g_share_n; i++) {
       RECT item = {20, 100 + i * 56, mw - 20, 148 + i * 56};
       int kind = g_share_kind[i];
@@ -4559,12 +4640,56 @@ static int share_open(const wchar_t *url) {
 
 static void share_fill(void) {
   g_share_n = 0;
+  g_share_kind[g_share_n++] = SHARE_COPY;
   g_share_kind[g_share_n++] = SHARE_TG;
   g_share_kind[g_share_n++] = SHARE_WA;
   g_share_kind[g_share_n++] = SHARE_MAX;
   g_share_kind[g_share_n++] = SHARE_MAIL;
-  g_share_kind[g_share_n++] = SHARE_COPY;
   if (g_share_i < 0 || g_share_i >= g_share_n) g_share_i = 0;
+}
+
+static int share_mail_file(const char *path) {
+  wchar_t w[MAX_PATH];
+  if (!utf8_to_wide(path, w, MAX_PATH) || !w[0]) return 0;
+  char apath[MAX_PATH * 2];
+  if (!WideCharToMultiByte(CP_ACP, 0, w, -1, apath, (int)sizeof apath, NULL, NULL)) return 0;
+  MapiFileDesc file;
+  memset(&file, 0, sizeof file);
+  file.nPosition = (ULONG)-1;
+  file.lpszPathName = apath;
+  file.lpszFileName = "mirefir-backup.json";
+  MapiMessage msg;
+  memset(&msg, 0, sizeof msg);
+  msg.lpszSubject = "MirEfir";
+  msg.lpszNoteText = "mirefir-backup.json";
+  msg.nFileCount = 1;
+  msg.lpFiles = &file;
+  ULONG r = MAPISendMail(0, (ULONG_PTR)(g_host ? g_host : NULL), &msg, MAPI_DIALOG | MAPI_LOGON_UI, 0);
+  return r == SUCCESS_SUCCESS;
+}
+
+static int share_send_file(int kind) {
+  char path[MAX_URL];
+  if (!profile_backup_internal_path(path, MAX_URL) || !profile_export_backup(g_st, g_pl, path)) return 0;
+  clipboard_write_file_drop(path);
+  if (kind == SHARE_COPY) {
+    set_note(i18n("backupCopied"));
+    return 1;
+  }
+  if (kind == SHARE_MAIL && share_mail_file(path)) {
+    set_note(i18n("shareSent"));
+    return 1;
+  }
+  wchar_t url[128];
+  url[0] = 0;
+  if (kind == SHARE_TG) wcsncpy(url, proto_has(L"tg") ? L"tg://" : L"https://t.me/", 127);
+  else if (kind == SHARE_WA) wcsncpy(url, proto_has(L"whatsapp") ? L"whatsapp://" : L"https://web.whatsapp.com/", 127);
+  else if (kind == SHARE_MAX) wcsncpy(url, proto_has(L"max") ? L"max://" : L"https://max.ru/", 127);
+  else wcsncpy(url, L"mailto:?subject=MirEfir", 127);
+  url[127] = 0;
+  int ok = share_open(url);
+  set_note(ok ? i18n("sharePasteFile") : i18n("shareFailFile"));
+  return ok;
 }
 
 static int share_send(int kind) {
@@ -4622,7 +4747,8 @@ static int share_send(int kind) {
   return 1;
 }
 
-static void open_share(void) {
+static void open_share(int file) {
+  g_share_file = file ? 1 : 0;
   share_fill();
   g_share_i = 0;
   g_menu_page = MENU_SHARE;
@@ -4632,8 +4758,9 @@ static void open_share(void) {
 
 static void apply_share(void) {
   if (g_share_i < 0 || g_share_i >= g_share_n) return;
-  if (share_send(g_share_kind[g_share_i])) backup_back_to_data();
-  else set_note(i18n("shareFail"));
+  int ok = g_share_file ? share_send_file(g_share_kind[g_share_i]) : share_send(g_share_kind[g_share_i]);
+  if (ok) backup_back_to_data();
+  else set_note(i18n(g_share_file ? "shareFailFile" : "shareFail"));
 }
 
 static void backup_back_to_data(void) {
@@ -4644,39 +4771,37 @@ static void backup_back_to_data(void) {
   if (g_menu) InvalidateRect(g_menu, NULL, FALSE);
 }
 
-static int apply_backup_ask(void) {
+static void note_file(const wchar_t *title, const char *path) {
+  wchar_t w[MAX_PATHU];
+  utf8_to_wide(path ? path : "", w, MAX_PATHU);
+  if (!w[0]) {
+    set_note(title);
+    return;
+  }
+  wchar_t msg[160];
+  int n = (int)wcslen(w);
+  const wchar_t *show = n > 72 ? w + n - 72 : w;
+  swprintf(msg, 160, L"%s: %s", title, show);
+  set_note(msg);
+}
+
+static void do_backup_export(void) {
   char path[MAX_URL];
   path[0] = 0;
-  if (g_ask_i == 0) {
-    if (!profile_backup_internal_path(path, MAX_URL)) {
-      set_note(i18n("backupFail"));
-      return 0;
-    }
-  } else if (g_ask_why == 2) {
-    char folder[MAX_PATHU];
-    if (!pick_folder(folder, MAX_PATHU) || !folder[0] || !profile_backup_in_folder(path, MAX_URL, folder)) {
-      if (g_host) SetFocus(g_host);
-      set_note(i18n("folderNone"));
-      return 0;
-    }
-  } else {
-    if (!pick_json_open(path, MAX_URL)) {
-      if (g_host) SetFocus(g_host);
-      set_note(i18n("folderNone"));
-      return 0;
-    }
+  if (!pick_json_save(path, MAX_URL)) {
+    if (g_host) SetFocus(g_host);
+    set_note(i18n("fileNone"));
+    return;
   }
   if (g_host) SetFocus(g_host);
-  if (g_ask_why == 2) {
-    if (profile_export_backup(g_st, g_pl, path)) set_note(i18n("backupSaved"));
-    else set_note(i18n("backupFail"));
-    backup_back_to_data();
-    return 1;
-  }
-  if (!profile_import_backup(g_st, g_pl, path)) {
-    set_note(g_ask_i == 0 ? i18n("backupNone") : i18n("backupFail"));
-    backup_back_to_data();
-    return 0;
+  if (profile_export_backup(g_st, g_pl, path)) note_file(i18n("backupSaved"), path);
+  else set_note(i18n("backupFail"));
+}
+
+static void apply_backup_file(const char *path) {
+  if (!path || !path[0] || !profile_import_backup(g_st, g_pl, path)) {
+    set_note(i18n("backupFail"));
+    return;
   }
   rebuild_groups();
   remember_group(0);
@@ -4685,6 +4810,27 @@ static int apply_backup_ask(void) {
   if (g_pl) epg_start(g_pl, g_st);
   persist_ui(1, 1, 1);
   set_note(i18n("backupLoaded"));
+}
+
+static void do_backup_import(void) {
+  char path[MAX_URL];
+  path[0] = 0;
+  if (!pick_json_open(path, MAX_URL)) {
+    if (g_host) SetFocus(g_host);
+    set_note(i18n("fileNone"));
+    return;
+  }
+  if (g_host) SetFocus(g_host);
+  apply_backup_file(path);
+}
+
+static int apply_backup_ask(void) {
+  if (g_ask_why == 2) {
+    do_backup_export();
+    backup_back_to_data();
+    return 1;
+  }
+  do_backup_import();
   backup_back_to_data();
   return 1;
 }
@@ -4794,7 +4940,42 @@ static int extra_page(void) {
 }
 
 static int is_ok_key(WPARAM key) {
-  return key == VK_RETURN || key == VK_SELECT || key == VK_EXECUTE;
+  return key == VK_RETURN || key == VK_SELECT || key == VK_EXECUTE || key == VK_GAMEPAD_A;
+}
+
+static int typing_field(void) {
+  return g_mode == UI_MENU && (g_menu_page == MENU_SEARCH || g_menu_page == MENU_URL || g_menu_page == MENU_PIN ||
+                              (g_menu_page == MENU_MULTI && g_mv_pick));
+}
+
+int shell_typing(void) { return typing_field(); }
+
+static int letter_key(WPARAM key) {
+  return (key >= 'A' && key <= 'Z') || (key >= '0' && key <= '9') || key == VK_SPACE;
+}
+
+WPARAM shell_map_key(WPARAM key) {
+  switch (key) {
+    case VK_GAMEPAD_A:
+      return VK_RETURN;
+    case VK_GAMEPAD_B:
+    case VK_GAMEPAD_VIEW:
+    case VK_BROWSER_BACK:
+      return VK_ESCAPE;
+    case VK_GAMEPAD_DPAD_UP:
+      return VK_UP;
+    case VK_GAMEPAD_DPAD_DOWN:
+      return VK_DOWN;
+    case VK_GAMEPAD_DPAD_LEFT:
+      return VK_LEFT;
+    case VK_GAMEPAD_DPAD_RIGHT:
+      return VK_RIGHT;
+    case VK_GAMEPAD_MENU:
+    case VK_LAUNCH_APP1:
+      return VK_APPS;
+    default:
+      return key;
+  }
 }
 
 static int play_archive_at(int ch, long long at, long long origin_s, long long origin_e) {
@@ -5222,7 +5403,14 @@ static LRESULT CALLBACK uiProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_SYSKEYDOWN:
     case WM_KEYUP:
     case WM_SYSKEYUP:
+    case WM_CHAR:
+    case WM_UNICHAR:
+    case WM_APPCOMMAND:
       if (g_host) PostMessageW(g_host, msg, wp, lp);
+      return 0;
+    case WM_RBUTTONDOWN:
+      if (g_host) SetFocus(g_host);
+      shell_context();
       return 0;
     case WM_TIMER:
       if (hwnd == g_guide && g_marquee && g_mode == UI_GUIDE) InvalidateRect(hwnd, NULL, FALSE);
@@ -5319,6 +5507,19 @@ static LRESULT CALLBACK uiProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
           }
           if (search_like()) {
             POINT pt = {x, y};
+            if (g_act == ACT_SEARCH && g_act_n) {
+              if (x >= g_act_x && x < g_act_x + g_act_w && y >= g_act_y && y < g_act_y + 8 + g_act_n * g_act_row) {
+                int i = (y - g_act_y - 8) / (g_act_row ? g_act_row : 44);
+                if (i >= 0 && i < g_act_n) {
+                  g_act_cur = i;
+                  run_act(i);
+                }
+                return 0;
+              }
+              close_act();
+              InvalidateRect(g_menu, NULL, FALSE);
+              return 0;
+            }
             if (PtInRect(&g_search_mic, pt)) {
               g_search_focus = 1;
               g_hit_i = -1;
@@ -5595,8 +5796,15 @@ static LRESULT CALLBACK ringProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return 0;
   }
   if (msg == WM_ERASEBKGND) return 1;
-  if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN || msg == WM_KEYUP || msg == WM_SYSKEYUP) && g_host) {
+  if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN || msg == WM_KEYUP || msg == WM_SYSKEYUP || msg == WM_CHAR ||
+       msg == WM_APPCOMMAND) &&
+      g_host) {
     PostMessageW(g_host, msg, wp, lp);
+    return 0;
+  }
+  if (msg == WM_RBUTTONDOWN) {
+    if (g_host) SetFocus(g_host);
+    shell_context();
     return 0;
   }
   if (msg == WM_LBUTTONDOWN && g_host) {
@@ -5631,7 +5839,14 @@ static LRESULT CALLBACK tileProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     mv_focus(slot);
     return 0;
   }
-  if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN || msg == WM_KEYUP || msg == WM_SYSKEYUP) && g_host) {
+  if (msg == WM_RBUTTONDOWN) {
+    if (g_host) SetFocus(g_host);
+    shell_context();
+    return 0;
+  }
+  if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN || msg == WM_KEYUP || msg == WM_SYSKEYUP || msg == WM_CHAR ||
+       msg == WM_APPCOMMAND) &&
+      g_host) {
     PostMessageW(g_host, msg, wp, lp);
     return 0;
   }
@@ -5913,7 +6128,81 @@ int shell_next_channel(int delta) {
   return g_index_in_group[pos];
 }
 
+int shell_appcommand(int cmd) {
+  switch (cmd) {
+    case APPCOMMAND_BROWSER_BACKWARD:
+    case APPCOMMAND_MEDIA_STOP:
+      go_back();
+      return 1;
+    case APPCOMMAND_BROWSER_SEARCH:
+      if (!typing_field()) {
+        open_search();
+        return 1;
+      }
+      return 0;
+    case APPCOMMAND_MEDIA_CHANNEL_UP: {
+      int ch = shell_next_channel(-1);
+      if (ch >= 0 && g_zap) g_zap(ch);
+      return 1;
+    }
+    case APPCOMMAND_MEDIA_CHANNEL_DOWN: {
+      int ch = shell_next_channel(1);
+      if (ch >= 0 && g_zap) g_zap(ch);
+      return 1;
+    }
+    case APPCOMMAND_MEDIA_PLAY_PAUSE:
+    case APPCOMMAND_MEDIA_PLAY:
+    case APPCOMMAND_MEDIA_PAUSE:
+      if (g_mode == UI_LIVE || g_mode == UI_PAD) {
+        player_toggle_pause();
+        return 1;
+      }
+      return 0;
+    case APPCOMMAND_MEDIA_REWIND:
+      if (g_mode == UI_LIVE || g_mode == UI_PAD) {
+        pad_nudge(-30);
+        return 1;
+      }
+      return 0;
+    case APPCOMMAND_MEDIA_FAST_FORWARD:
+      if (g_mode == UI_LIVE || g_mode == UI_PAD) {
+        pad_nudge(30);
+        return 1;
+      }
+      return 0;
+    case APPCOMMAND_MEDIA_RECORD:
+      if (!typing_field()) {
+        do_live_rec();
+        return 1;
+      }
+      return 0;
+    case APPCOMMAND_VOLUME_MUTE:
+      if (g_st && !typing_field()) {
+        g_st->muted = !g_st->muted;
+        player_set_volume(g_st->volume, g_st->muted);
+        profile_save_session(g_st, player_current_index(), g_st->last_name);
+        return 1;
+      }
+      return 0;
+    case APPCOMMAND_BROWSER_HOME:
+      if (g_mode == UI_LIVE || g_mode == UI_PAD) {
+        g_menu_i = 0;
+        g_menu_page = MENU_MAIN;
+        set_mode(UI_MENU);
+        return 1;
+      }
+      return 0;
+    default:
+      return 0;
+  }
+}
+
 int shell_host_click(void) {
+  if (g_mode == UI_LIVE) {
+    g_pad_i = 0;
+    set_mode(UI_PAD);
+    return 1;
+  }
   if (g_mode == UI_MENU && g_menu_page == MENU_SETUP) {
     g_menu_page = MENU_MAIN;
     if (needs_setup()) set_mode(UI_MENU);
@@ -6007,6 +6296,44 @@ static void run_ch_menu(void) {
   }
   if (g_guide) InvalidateRect(g_guide, NULL, FALSE);
 }
+
+static int open_context(void) {
+  if (g_act) {
+    close_act();
+    if (g_menu) InvalidateRect(g_menu, NULL, FALSE);
+    return 1;
+  }
+  if (g_mode == UI_MENU && g_menu_page == MENU_URL) {
+    open_url_field_menu();
+    return 1;
+  }
+  if (g_mode == UI_MENU && (g_menu_page == MENU_SEARCH || (g_menu_page == MENU_MULTI && g_mv_pick))) {
+    open_search_field_menu();
+    return 1;
+  }
+  if (g_mode == UI_MENU && g_menu_page == MENU_SETTINGS && g_set_pane == 1) {
+    fill_set_rows();
+    if (g_set_i < 0 || g_set_i >= g_sn) return 1;
+    int id = g_sid[g_set_i];
+    if (id == SID_PL) {
+      open_pl_act(g_sidx[g_set_i]);
+      if (g_menu) InvalidateRect(g_menu, NULL, FALSE);
+      return 1;
+    }
+    if (id == SID_EPG) {
+      open_epg_act(g_sidx[g_set_i]);
+      if (g_menu) InvalidateRect(g_menu, NULL, FALSE);
+      return 1;
+    }
+  }
+  if (g_mode == UI_LIVE || g_mode == UI_PAD || g_mode == UI_GUIDE) {
+    open_ch_menu();
+    return 1;
+  }
+  return 1;
+}
+
+int shell_context(void) { return open_context(); }
 
 static void move_fav(int d) {
   if (!g_st || g_st->fav_n < 2) return;
@@ -6208,6 +6535,28 @@ static int handle_extra_keys(WPARAM key) {
     return 1;
   }
   if (g_menu_page == MENU_SEARCH || (g_menu_page == MENU_MULTI && g_mv_pick)) {
+    if (g_act == ACT_SEARCH) {
+      if (key == VK_UP || key == VK_DOWN) {
+        int d = key == VK_DOWN ? 1 : -1;
+        if (g_act_n) g_act_cur = (g_act_cur + g_act_n + d) % g_act_n;
+        InvalidateRect(g_menu, NULL, FALSE);
+        return 1;
+      }
+      if (is_ok_key(key) || key == VK_RIGHT) {
+        run_act(g_act_cur);
+        return 1;
+      }
+      if (key == VK_ESCAPE || key == VK_LEFT || key == VK_BACK) {
+        close_act();
+        InvalidateRect(g_menu, NULL, FALSE);
+        return 1;
+      }
+      return 1;
+    }
+    if (key == VK_F2 || key == VK_APPS) {
+      open_search_field_menu();
+      return 1;
+    }
     if (key == VK_LEFT || key == VK_RIGHT) {
       g_hit_i = -1;
       g_search_focus = key == VK_RIGHT ? 1 : 0;
@@ -6249,7 +6598,7 @@ static int handle_extra_keys(WPARAM key) {
       }
       return 1;
     }
-    if (g_st && key_is(g_st->key_voice, key)) {
+    if (g_st && key_is(g_st->key_voice, key) && !letter_key(key)) {
       do_voice();
       return 1;
     }
@@ -6413,6 +6762,7 @@ static int handle_extra_keys(WPARAM key) {
 }
 
 int shell_keydown(WPARAM key) {
+  key = shell_map_key(key);
   if (is_ok_key(key) && g_hold_kind) return 1;
   if (g_chm == CHM_MOVE) {
     if (key == VK_UP || key == VK_DOWN) {
@@ -6511,7 +6861,7 @@ int shell_keydown(WPARAM key) {
     }
     return 1;
   }
-  if (g_st && (g_mode == UI_LIVE || g_mode == UI_PAD)) {
+  if (g_st && (g_mode == UI_LIVE || g_mode == UI_PAD) && !typing_field()) {
     if (key_is(g_st->key_search, key)) {
       open_search();
       return 1;
@@ -6565,12 +6915,12 @@ int shell_keydown(WPARAM key) {
       return 1;
     }
   }
-  if (key == 'G' || key == VK_F1 || (g_st && key_is(g_st->key_guide, key))) {
+  if (!typing_field() && (key == 'G' || key == VK_F1 || (g_st && key_is(g_st->key_guide, key)))) {
     if (g_mode == UI_GUIDE) set_mode(UI_LIVE);
     else open_guide();
     return 1;
   }
-  if (key == VK_ESCAPE) {
+  if (key == VK_ESCAPE || (key == VK_BACK && !typing_field())) {
     go_back();
     return 1;
   }
@@ -6897,6 +7247,7 @@ int shell_keydown(WPARAM key) {
 int shell_char(unsigned ch) {
   if (g_mode != UI_MENU) return 0;
   if (voice_busy()) return 1;
+  if (g_act) return 1;
   if (g_menu_page == MENU_URL) {
     if (g_act) return 1;
     if (ch < 32 || ch == 127) return 1;
@@ -6938,6 +7289,7 @@ int shell_char(unsigned ch) {
 }
 
 int shell_keyup(WPARAM key) {
+  key = shell_map_key(key);
   if (!is_ok_key(key) || !g_hold_kind) return 0;
   int kind = g_hold_kind;
   int held = (GetTickCount() - g_hold_at) >= HOLD_MS;

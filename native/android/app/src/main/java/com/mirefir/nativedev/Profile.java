@@ -627,6 +627,7 @@ final class Profile {
   String exportBackup(File dest) {
     try {
       JSONObject o = new JSONObject();
+      o.put("v", 1);
       o.put("version", 1);
       o.put("createdAt", new java.util.Date().toString());
       o.put("settings", settingsObj());
@@ -680,10 +681,12 @@ final class Profile {
       JSONObject session = o.optJSONObject("session");
       if (session != null) applySession(session.toString());
       JSONArray favNames = o.optJSONArray("favorites");
-      if (favNames != null && st.favIds.isEmpty()) {
+      if (favNames != null) {
         for (int i = 0; i < favNames.length(); i++) {
-          String name = favNames.optString(i, "");
-          int idx = M3u.findName(pl, name);
+          String v = favNames.optString(i, "");
+          if (v.isEmpty()) continue;
+          int idx = M3u.findId(pl, v);
+          if (idx < 0) idx = M3u.findName(pl, v);
           if (idx >= 0 && !st.favIds.contains(pl.get(idx).id)) st.favIds.add(pl.get(idx).id);
         }
       }

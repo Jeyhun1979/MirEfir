@@ -541,7 +541,8 @@ static LRESULT CALLBACK child_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     SetFocus(g_host);
     return 0;
   }
-  if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN || msg == WM_KEYUP || msg == WM_SYSKEYUP || msg == WM_CHAR) &&
+  if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN || msg == WM_KEYUP || msg == WM_SYSKEYUP || msg == WM_CHAR ||
+       msg == WM_APPCOMMAND) &&
       g_host) {
     PostMessageW(g_host, msg, wp, lp);
     return 0;
@@ -551,6 +552,11 @@ static LRESULT CALLBACK child_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     ClientToScreen(hwnd, &pt);
     ScreenToClient(g_host, &pt);
     PostMessageW(g_host, WM_LBUTTONDOWN, wp, MAKELPARAM(pt.x, pt.y));
+    SetFocus(g_host);
+    return 0;
+  }
+  if (msg == WM_RBUTTONDOWN && g_host) {
+    PostMessageW(g_host, WM_RBUTTONDOWN, wp, lp);
     SetFocus(g_host);
     return 0;
   }

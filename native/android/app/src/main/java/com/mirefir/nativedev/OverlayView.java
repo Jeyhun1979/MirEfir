@@ -1,8 +1,6 @@
 package com.mirefir.nativedev;
 
-import android.content.ActivityNotFoundException;
 import android.content.Context;
-import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -10,7 +8,6 @@ import android.graphics.Insets;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
-import android.net.Uri;
 import android.os.Build;
 import android.os.SystemClock;
 import android.text.Layout;
@@ -70,6 +67,7 @@ final class OverlayView extends View {
   boolean daysOpen, overlayPip;
   final List<Long> guideDays = new ArrayList<>();
   int searchI, histI, recI, mvI, setupI, shareI, askI, pinI, chmI;
+  boolean shareFile;
   int padI = 4, padFocus = PAD_NONE;
   String note = "";
   long noteUntil, padUntil, holdAt;
@@ -2288,7 +2286,8 @@ final class OverlayView extends View {
     hit(0, 0, mw, h, H_PANEL, 0);
     text.setTextSize(ts(20));
     text.setColor(Color.WHITE);
-    c.drawText(TextUtils.ellipsize(I18n.t("shareTitle"), text, mw - dp(80), TextUtils.TruncateAt.END).toString(), dp(24), dp(48), text);
+    String title = I18n.t(shareFile ? "shareTitleFile" : "shareTitle");
+    c.drawText(TextUtils.ellipsize(title, text, mw - dp(80), TextUtils.TruncateAt.END).toString(), dp(24), dp(48), text);
     drawClose(c, mw, 0);
     float rowH = Math.min(dp(52), (h - dp(80)) / rows.length);
     for (int i = 0; i < rows.length; i++) {
@@ -2433,7 +2432,7 @@ final class OverlayView extends View {
     if (textMode() && textKey(e)) return true;
     if (handleBoundKey(code, e)) return true;
     if (e.getRepeatCount() > 0 && isOk(code)) return true;
-    if (isVoiceKey(code)) {
+    if (isVoiceKey(code) && !textMode()) {
       if (e.getRepeatCount() == 0 && host != null) host.startVoice();
       return true;
     }
@@ -2683,6 +2682,47 @@ final class OverlayView extends View {
     setMode(CHMENU);
   }
 
+  /** Правая кнопка мыши / гиропульта: те же опции, что удержание ОК (избранное, копировать/вставить). */
+  private boolean openContext(Hit hh) {
+    int k = hh == null ? 0 : hh.kind;
+    int i = hh == null ? -1 : hh.idx;
+    if (mode == URL) {
+      urlI = urlText == null || urlText.isEmpty() ? 1 : 2;
+      invalidate();
+      return true;
+    }
+    if (mode == SEARCH) {
+      searchI = -1;
+      searchBtn = (searchQ == null || searchQ.isEmpty()) ? 1 : 2;
+      invalidate();
+      return true;
+    }
+    if (mode == SETTINGS && k == H_ROW) {
+      setPane = 1;
+      setI = i;
+      lRows.lastSel = i;
+      fillRows();
+      int id = (setI >= 0 && setI < rows.size()) ? rows.get(setI).id : -1;
+      if ((id >= 1000 && id < 1132) || (id >= 3000 && id < 3400) || (id >= 6000 && id < 6500)) activateRow();
+      invalidate();
+      return true;
+    }
+    if (mode == GUIDE) {
+      if (k == H_GCH) {
+        focusCol = COL_C;
+        chI = i;
+        lChan.lastSel = i;
+      }
+      openChMenu();
+      return true;
+    }
+    if (mode == LIVE || mode == PAD) {
+      openChMenu();
+      return true;
+    }
+    return true;
+  }
+
   private void volNote() {
     volPct = player == null ? 0 : player.volume();
     volUntil = SystemClock.uptimeMillis() + 1800;
@@ -2799,12 +2839,16 @@ final class OverlayView extends View {
     if (code >= KeyEvent.KEYCODE_NUMPAD_0 && code <= KeyEvent.KEYCODE_NUMPAD_9) ch = '0' + (code - KeyEvent.KEYCODE_NUMPAD_0);
     else if (code == KeyEvent.KEYCODE_NUMPAD_DOT) ch = '.';
     else if (e.isPrintingKey()) ch = e.getUnicodeChar(e.getMetaState());
+    else if (code >= KeyEvent.KEYCODE_A && code <= KeyEvent.KEYCODE_Z) {
+      ch = 'a' + (code - KeyEvent.KEYCODE_A);
+      if (e.isShiftPressed()) ch = Character.toUpperCase(ch);
+    } else if (code == KeyEvent.KEYCODE_SPACE) ch = ' ';
     if (ch <= 0 || (ch & KeyCharacterMap.COMBINING_ACCENT) != 0) return false;
     boolean digit = ch >= '0' && ch <= '9';
     boolean pin = mode == URL && urlKind == U_PIN;
     if (pin && !digit) return true;
     String cur = currentText();
-    int max = mode == SEARCH ? 120 : pin ? 8 : 4096;
+    int max = mode == SEARCH ? 120 : pin ? 8 : (mode == URL && urlKind == U_CLOUD) ? 65536 : 4096;
     if (cur == null) cur = "";
     if (cur.length() >= max) return true;
     onKbText(cur + new String(Character.toChars(ch)));
@@ -3226,6 +3270,7 @@ final class OverlayView extends View {
     browseWhy = why;
     browseDir = dir == null ? new File("/storage") : dir;
     browseList.clear();
+    if (why == 1) browseList.add(browseDir);
     File[] kids = browseDir.listFiles();
     if (browseDir.getParentFile() != null) browseList.add(browseDir.getParentFile());
     if (kids != null) {
@@ -3237,6 +3282,8 @@ final class OverlayView extends View {
         if (f.getName().startsWith(".")) continue;
         if (why == 0 && f.isFile() && !f.getName().toLowerCase(Locale.ROOT).endsWith(".m3u")
             && !f.getName().toLowerCase(Locale.ROOT).endsWith(".m3u8")) continue;
+        if (why == 1 && f.isFile()) continue;
+        if (why == 2 && f.isFile() && !f.getName().toLowerCase(Locale.ROOT).endsWith(".json")) continue;
         browseList.add(f);
       }
     }
@@ -3247,8 +3294,23 @@ final class OverlayView extends View {
   private boolean browseOk() {
     if (browseI < 0 || browseI >= browseList.size()) return true;
     File f = browseList.get(browseI);
+    if (browseWhy == 1 && f.equals(browseDir)) {
+      File out = new File(browseDir, "mirefir-backup.json");
+      boolean ok = profile.exportBackup(out) != null;
+      note(ok ? I18n.t("backupSaved") + ": " + out.getAbsolutePath() : I18n.t("backupFail"), 2200);
+      setMode(SETTINGS);
+      return true;
+    }
     if (f.isDirectory()) {
       openBrowse(browseWhy, f);
+      return true;
+    }
+    if (browseWhy == 2) {
+      if (host != null) host.importBackupFile(f);
+      else {
+        note(profile.importBackup(Util.read(f)) ? I18n.t("backupLoaded") : I18n.t("backupFail"), 1600);
+        if (profile.pl != null && !profile.pl.isEmpty()) bootLive();
+      }
       return true;
     }
     if (browseWhy == 0) {
@@ -3289,7 +3351,10 @@ final class OverlayView extends View {
       File f = browseList.get(i);
       text.setTextSize(font());
       text.setColor(Color.WHITE);
-      String lab = (f.isDirectory() ? "▸ " : "") + f.getName();
+      String lab;
+      if (browseWhy == 1 && f.equals(browseDir)) lab = I18n.t("browseSaveHere");
+      else if (f.isDirectory() && f.equals(browseDir.getParentFile())) lab = "▸ ..";
+      else lab = (f.isDirectory() ? "▸ " : "") + f.getName();
       c.drawText(TextUtils.ellipsize(lab, text, mw - dp(40), TextUtils.TruncateAt.END).toString(), dp(24), y + rowH * 0.64f, text);
       hit(0, Math.max(y, top), mw, Math.min(y + rowH, h), H_LIST, i);
     }
@@ -3446,24 +3511,9 @@ final class OverlayView extends View {
   }
 
   private boolean shareOk() {
-    String code = Cloud.make(profile);
-    if (code.isEmpty()) { note(I18n.t("codeNeed"), 1600); return true; }
-    Util.setClipboard(getContext(), code);
-    if (shareI == 0) { note(I18n.t("codeCopied"), 1600); setMode(SETTINGS); return true; }
-    String[] urls = {
-        "",
-        "tg://msg?text=" + Uri.encode(code),
-        "https://wa.me/?text=" + Uri.encode(code),
-        "https://max.ru/?text=" + Uri.encode(code),
-        "mailto:?subject=MirEfir&body=" + Uri.encode(code)
-    };
-    try {
-      Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(urls[shareI]));
-      i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-      getContext().startActivity(i);
-    } catch (ActivityNotFoundException e) {
-      note(I18n.t("codeCopied"), 1600);
-    }
+    if (host == null) return true;
+    if (shareFile) host.shareBackup(shareI);
+    else host.shareCode(shareI);
     setMode(SETTINGS);
     return true;
   }
@@ -3483,8 +3533,9 @@ final class OverlayView extends View {
         note(profile.exportBackup(f) != null ? I18n.t("backupSaved") : I18n.t("backupFail"), 1600);
         setMode(SETTINGS);
       } else {
-        File[] all = profile.backupsDir().listFiles();
-        File last = all != null && all.length > 0 ? all[all.length - 1] : null;
+        File last = newestJson(profile.backupsDir());
+        if (last == null) last = newestJson(new File("/storage/emulated/0/Download/MAX"));
+        if (last == null) last = newestJson(new File("/storage/emulated/0/Download"));
         if (last != null && profile.importBackup(Util.read(last))) {
           note(I18n.t("backupLoaded"), 1600);
           bootLive();
@@ -3495,6 +3546,24 @@ final class OverlayView extends View {
       host.pickFolder(askWhy);
     }
     return true;
+  }
+
+  private static File newestJson(File dir) {
+    if (dir == null || !dir.isDirectory()) return null;
+    File[] files = dir.listFiles();
+    if (files == null) return null;
+    File best = null;
+    long t = -1;
+    for (File f : files) {
+      String n = f.getName().toLowerCase();
+      if (!n.endsWith(".json")) continue;
+      if (!n.contains("mirefir") && !n.contains("backup")) continue;
+      if (f.lastModified() >= t) {
+        t = f.lastModified();
+        best = f;
+      }
+    }
+    return best;
   }
 
   void onFolderPicked(boolean recFolder) {
@@ -4383,9 +4452,10 @@ final class OverlayView extends View {
       case 9:
         rows.add(new Row(200, I18n.t("setCloudCopy"), I18n.t("setCloudHint")));
         rows.add(new Row(201, I18n.t("setCloudShare"), I18n.t("setCloudShareHint")));
+        rows.add(new Row(207, I18n.t("setBackupShare"), I18n.t("setBackupShareHint")));
         rows.add(new Row(202, I18n.t("setCloudPaste"), ""));
         rows.add(new Row(203, I18n.t("setExport"), I18n.t("setExportHint")));
-        rows.add(new Row(204, I18n.t("setImport"), ""));
+        rows.add(new Row(204, I18n.t("setImport"), I18n.t("setImportHint")));
         rows.add(new Row(205, I18n.t("setReset"), I18n.t("setResetHint")));
         rows.add(new Row(206, I18n.t("setVosk"), voice != null && voice.voskReady() ? I18n.t("voskReady") : I18n.t("voskDownload")));
         break;
@@ -4552,10 +4622,20 @@ final class OverlayView extends View {
         return;
       case 90: s.language = "en".equals(s.language) ? "ru" : "en"; I18n.set(s.language); rebuildGroups(); fillGroup(); break;
       case 200: Util.setClipboard(getContext(), Cloud.make(profile)); note(I18n.t("codeCopied"), 1600); break;
-      case 201: setMode(SHARE); break;
-      case 202: openUrlEditor(U_CLOUD, SETTINGS); return;
-      case 203: askWhy = 1; setMode(ASK); break;
-      case 204: askWhy = 2; setMode(ASK); break;
+      case 201: shareFile = false; shareI = 0; setMode(SHARE); break;
+      case 207: shareFile = true; shareI = 0; setMode(SHARE); break;
+      case 202: {
+        String clip = Util.clipboard(getContext());
+        if (Cloud.looksLike(clip)) { applyCloudInBg(clip); return; }
+        openUrlEditor(U_CLOUD, SETTINGS);
+        return;
+      }
+      case 203:
+        if (host != null) host.pickBackupSave();
+        break;
+      case 204:
+        if (host != null) host.pickBackupOpen();
+        break;
       case 205: profile.resetSettings(); I18n.set(s.language); rebuildGroups(); note(I18n.t("settingsReset"), 1600); break;
       case 206:
         if (voice != null && !voice.voskReady()) {
@@ -4657,14 +4737,16 @@ final class OverlayView extends View {
         || act == MotionEvent.ACTION_HOVER_EXIT) return false;
     if (Ui.onTouchInput()) invalidate();
     if (act == MotionEvent.ACTION_BUTTON_PRESS) {
-      if ((ev.getButtonState() & MotionEvent.BUTTON_SECONDARY) != 0) goBack();
+      if ((ev.getButtonState() & MotionEvent.BUTTON_SECONDARY) != 0) {
+        return openContext(hitAt(ev.getX() - padL, ev.getY() - padT));
+      }
       return true;
     }
     switch (act) {
       case MotionEvent.ACTION_DOWN:
         if ((ev.getButtonState() & MotionEvent.BUTTON_SECONDARY) != 0) {
           cancelTouch();
-          return goBack();
+          return openContext(hitAt(ev.getX() - padL, ev.getY() - padT));
         }
         touchDown(ev);
         break;
@@ -5106,7 +5188,8 @@ final class OverlayView extends View {
     if (code == KeyEvent.KEYCODE_DEL || code == KeyEvent.KEYCODE_FORWARD_DEL) return true;
     if (e.isCtrlPressed() || e.isAltPressed()) return code == KeyEvent.KEYCODE_V || code == KeyEvent.KEYCODE_C
         || code == KeyEvent.KEYCODE_A || code == KeyEvent.KEYCODE_X;
-    return e.isPrintingKey();
+    if (e.isPrintingKey() || code == KeyEvent.KEYCODE_SPACE) return true;
+    return code >= KeyEvent.KEYCODE_A && code <= KeyEvent.KEYCODE_Z;
   }
 
   private String currentText() { return mode == SEARCH ? searchQ : urlText; }
@@ -5170,7 +5253,8 @@ final class OverlayView extends View {
       fillSearch();
       lSearch.reset();
     } else if (mode == URL) {
-      urlText = urlKind == U_PIN ? Util.clip(clip.replaceAll("\\D", ""), 8) : Util.clip(clip, 4096);
+      urlText = urlKind == U_PIN ? Util.clip(clip.replaceAll("\\D", ""), 8)
+          : Util.clip(clip, urlKind == U_CLOUD ? 65536 : 4096);
     }
     syncKb();
     invalidate();

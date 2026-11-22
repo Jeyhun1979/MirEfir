@@ -1,5 +1,13 @@
 #include "app.h"
 
+#ifndef GET_APPCOMMAND_LPARAM
+#define FAPPCOMMAND_MASK 0xF000
+#define GET_APPCOMMAND_LPARAM(lp) ((short)(HIWORD(lp) & ~FAPPCOMMAND_MASK))
+#endif
+#ifndef GET_XBUTTON_WPARAM
+#define GET_XBUTTON_WPARAM(wp) (HIWORD(wp))
+#endif
+
 static const wchar_t kClass[] = L"MirEfirShell";
 static const wchar_t kTitle[] = L"MirEfir";
 
@@ -159,6 +167,19 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       SetFocus(hwnd);
       shell_host_click();
       return 0;
+    case WM_RBUTTONDOWN:
+      SetFocus(hwnd);
+      shell_context();
+      return 0;
+    case WM_XBUTTONDOWN:
+      if (GET_XBUTTON_WPARAM(wp) == XBUTTON1) {
+        shell_keydown(VK_ESCAPE);
+        return 0;
+      }
+      break;
+    case WM_APPCOMMAND:
+      if (shell_appcommand(GET_APPCOMMAND_LPARAM(lp))) return TRUE;
+      break;
     case WM_MOUSEACTIVATE:
       SetFocus(hwnd);
       return MA_ACTIVATE;
@@ -166,9 +187,11 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       shell_mouse_moved();
       break;
     case WM_KEYUP:
+      wp = shell_map_key(wp);
       if (shell_keyup(wp)) return 0;
       break;
     case WM_KEYDOWN: {
+      wp = shell_map_key(wp);
       if (wp == VK_F11) {
         set_fullscreen(hwnd, !g_fullscreen);
         return 0;
@@ -202,13 +225,13 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         profile_save_session(&g_st, player_current_index(), g_st.last_name);
         return 0;
       }
-      if (wp == 'M') {
+      if (wp == 'M' && !shell_typing()) {
         g_st.muted = !g_st.muted;
         player_set_volume(g_st.volume, g_st.muted);
         profile_save_session(&g_st, player_current_index(), g_st.last_name);
         return 0;
       }
-      if (wp == 'A') {
+      if (wp == 'A' && !shell_typing()) {
         player_cycle_audio();
         return 0;
       }

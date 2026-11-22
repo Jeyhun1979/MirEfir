@@ -1,6 +1,7 @@
 #include "app.h"
 #include "tinf.h"
 #include <shlobj.h>
+#include <shellapi.h>
 #include <commdlg.h>
 #include <ctype.h>
 #include <stdio.h>
@@ -565,6 +566,9 @@ static void parse_lists(const char *json, Settings *st, Playlist *pl) {
   st->fav_n = 0;
   st->recent_n = 0;
   json_array_strings(json_value_of(json, "favorites"), on_favorite, &ctx);
+  if (!st->fav_n) json_array_strings(json_value_of(json, "favoriteIds"), on_favorite, &ctx);
+  const char *settings = json_value_of(json, "settings");
+  if (!st->fav_n && settings) json_array_strings(json_value_of(settings, "favoriteIds"), on_favorite, &ctx);
   json_array_each(json_value_of(json, "history"), on_history, &ctx);
 }
 
@@ -1153,7 +1157,7 @@ static void trim_clip(char *s) {
   while (n > 0 && (s[n - 1] == ' ' || s[n - 1] == '\t')) s[--n] = 0;
 }
 
-int clipboard_read_utf8(char *out, int max) {
+int clipboard_read_utf8_full(char *out, int max) {
   if (!out || max < 2) return 0;
   out[0] = 0;
   if (!OpenClipboard(NULL)) return 0;
@@ -1168,8 +1172,42 @@ int clipboard_read_utf8(char *out, int max) {
     }
   }
   CloseClipboard();
-  if (ok) trim_clip(out);
+  return ok && out[0] != 0;
+}
+
+int clipboard_read_utf8(char *out, int max) {
+  if (!clipboard_read_utf8_full(out, max)) return 0;
+  trim_clip(out);
   return out[0] != 0;
+}
+
+int clipboard_write_file_drop(const char *path) {
+  if (!path || !path[0]) return 0;
+  wchar_t w[MAX_PATH];
+  if (!utf8_to_wide(path, w, MAX_PATH) || !w[0]) return 0;
+  size_t wlen = wcslen(w);
+  SIZE_T bytes = sizeof(DROPFILES) + (wlen + 2) * sizeof(wchar_t);
+  HGLOBAL mem = GlobalAlloc(GHND, bytes);
+  if (!mem) return 0;
+  DROPFILES *df = (DROPFILES *)GlobalLock(mem);
+  if (!df) {
+    GlobalFree(mem);
+    return 0;
+  }
+  df->pFiles = sizeof(DROPFILES);
+  df->fWide = TRUE;
+  wchar_t *dest = (wchar_t *)((char *)df + sizeof(DROPFILES));
+  memcpy(dest, w, (wlen + 1) * sizeof(wchar_t));
+  dest[wlen + 1] = 0;
+  GlobalUnlock(mem);
+  if (!OpenClipboard(NULL)) {
+    GlobalFree(mem);
+    return 0;
+  }
+  EmptyClipboard();
+  SetClipboardData(CF_HDROP, mem);
+  CloseClipboard();
+  return 1;
 }
 
 int clipboard_write_utf8(const char *text) {
@@ -1219,15 +1257,22 @@ static int pick_json_path(char *out, int max, int save) {
   wchar_t file[MAX_PATH];
   file[0] = 0;
   if (save) wcscpy(file, L"mirefir-backup.json");
+  wchar_t desk[MAX_PATH];
+  desk[0] = 0;
+  SHGetFolderPathW(NULL, CSIDL_DESKTOPDIRECTORY, NULL, SHGFP_TYPE_CURRENT, desk);
   OPENFILENAMEW ofn;
   memset(&ofn, 0, sizeof ofn);
   ofn.lStructSize = sizeof ofn;
+  ofn.hwndOwner = GetActiveWindow();
   ofn.lpstrFile = file;
   ofn.nMaxFile = MAX_PATH;
   ofn.lpstrFilter = L"JSON\0*.json\0All\0*.*\0";
   ofn.nFilterIndex = 1;
-  ofn.Flags = OFN_NOCHANGEDIR | (save ? OFN_OVERWRITEPROMPT : (OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST));
+  ofn.lpstrInitialDir = desk[0] ? desk : NULL;
+  ofn.Flags = OFN_EXPLORER | OFN_HIDEREADONLY | OFN_NOCHANGEDIR |
+              (save ? OFN_OVERWRITEPROMPT : (OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST));
   ofn.lpstrDefExt = L"json";
+  ofn.lpstrTitle = save ? L"Куда сохранить копию?" : L"Откуда восстановить?";
   int ok = save ? GetSaveFileNameW(&ofn) : GetOpenFileNameW(&ofn);
   if (!ok || !file[0]) return 0;
   return wide_to_utf8(file, out, max) && out[0] != 0;
@@ -1284,7 +1329,8 @@ int profile_export_backup(const Settings *st, const Playlist *pl, const char *pa
   profile_dirs(dir, NULL, MAX_PATH);
   swprintf(m3u, MAX_PATH, L"%s\\playlist.m3u", dir);
   char *text = read_file_utf8(m3u, NULL);
-  int cap = 16384 + (text ? (int)strlen(text) * 2 : 0) + st->pl_n * (MAX_URL * 2 + 80) + st->epg_n * (MAX_URL * 2 + 80);
+  int cap = 16384 + (text ? (int)strlen(text) * 2 : 0) + st->pl_n * (MAX_URL * 2 + 80) + st->epg_n * (MAX_URL * 2 + 80) +
+            MAX_FAV * (MAX_NAME * 2 + MAX_ID * 2 + 16);
   char *buf = (char *)malloc((size_t)cap);
   if (!buf) {
     free(text);
@@ -1323,13 +1369,26 @@ int profile_export_backup(const Settings *st, const Playlist *pl, const char *pa
     n += snprintf(buf + n, cap - n, "%s{\"id\":\"%s\",\"url\":\"%s\",\"enabled\":%s,\"slot\":%d}", i ? "," : "", id, url,
                   slot ? "true" : "false", slot);
   }
-  n += snprintf(buf + n, cap - n, "],\"favorites\":[");
+  n += snprintf(buf + n, cap - n, "],\"activePlaylistId\":\"%s\"", st->active_pl);
+  n += snprintf(buf + n, cap - n, ",\"favorites\":[");
+  int fn = 0;
   for (int i = 0; i < st->fav_n && pl && n < cap - 8; i++) {
     int idx = st->fav[i];
     if (idx < 0 || idx >= pl->count) continue;
+    char name[MAX_NAME * 2];
+    json_esc(pl->items[idx].name, name, sizeof name);
+    n += snprintf(buf + n, cap - n, "%s\"%s\"", fn ? "," : "", name);
+    fn++;
+  }
+  n += snprintf(buf + n, cap - n, "],\"favoriteIds\":[");
+  fn = 0;
+  for (int i = 0; i < st->fav_n && pl && n < cap - 8; i++) {
+    int idx = st->fav[i];
+    if (idx < 0 || idx >= pl->count || !pl->items[idx].id[0]) continue;
     char id[MAX_ID * 2];
     json_esc(pl->items[idx].id, id, sizeof id);
-    n += snprintf(buf + n, cap - n, "%s\"%s\"", i ? "," : "", id);
+    n += snprintf(buf + n, cap - n, "%s\"%s\"", fn ? "," : "", id);
+    fn++;
   }
   n += snprintf(buf + n, cap - n, "]");
   if (text) {
@@ -1356,6 +1415,10 @@ int profile_import_backup(Settings *st, Playlist *pl, const char *path) {
   st->pl_n = 0;
   st->epg_n = 0;
   parse_settings_blob(json, st);
+  json_extract_string(json, "activePlaylistId", st->active_pl, MAX_ID);
+  json_array_each(json_value_of(json, "playlists"), on_playlist_item, st);
+  json_array_each(json_value_of(json, "epgSources"), on_epg_source, st);
+  import_epg_from_json(st, json);
   int ok = 1;
   if (pl) {
     Playlist tmp;
@@ -1363,16 +1426,31 @@ int profile_import_backup(Settings *st, Playlist *pl, const char *path) {
     if (load_playlist_from_json(json, &tmp) && tmp.count) {
       playlist_free(pl);
       *pl = tmp;
+      char *text = json_dup_string(json, "playlistText");
+      if (text) {
+        wchar_t dir[MAX_PATH], m3u[MAX_PATH];
+        profile_dirs(dir, NULL, MAX_PATH);
+        swprintf(m3u, MAX_PATH, L"%s\\playlist.m3u", dir);
+        write_file_utf8(m3u, text);
+        free(text);
+      }
     } else {
       playlist_free(&tmp);
       if (st->pl_n) ok = profile_fetch_playlist(pl, st->playlists[0].url);
     }
-    if (pl->count) parse_lists(json, st, pl);
+    if (pl->count) {
+      parse_lists(json, st, pl);
+      if (!st->fav_n) profile_restore_lists(st, pl);
+    }
+  }
+  if (!st->pl_n && pl && pl->count) {
+    add_pl_item(st, "local", "playlist.m3u", "playlist.m3u");
+    if (!st->active_pl[0]) snprintf(st->active_pl, MAX_ID, "local");
   }
   free(json);
   profile_save_settings(st);
   profile_save_sources(st);
-  return ok && (!pl || pl->count > 0);
+  return ok && (!pl || pl->count > 0 || st->pl_n > 0);
 }
 
 static const char kB64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -1424,31 +1502,32 @@ static int b64_dec(const char *in, unsigned char *out, int max) {
 
 char *cloud_make_code(const Settings *st, const Playlist *pl) {
   if (!st) return NULL;
-  int cap = 6144 + st->pl_n * (MAX_URL * 2 + 8) + st->epg_n * (MAX_URL * 2 + 8);
+  int cap = 16384 + st->pl_n * (MAX_URL * 2 + 8) + st->epg_n * (MAX_URL * 2 + 8) + MAX_FAV * (MAX_NAME * 2 + 8);
   char *json = (char *)malloc((size_t)cap);
   if (!json) return NULL;
   int n = 0;
   n += snprintf(json + n, cap - n, "{\"v\":2,\"f\":[");
   int fn = 0;
-  for (int i = 0; i < st->fav_n && pl && fn < 80; i++) {
+  for (int i = 0; i < st->fav_n && pl && fn < MAX_FAV; i++) {
     int idx = st->fav[i];
     if (idx < 0 || idx >= pl->count) continue;
     char name[MAX_NAME * 2];
     json_esc(pl->items[idx].name, name, sizeof name);
-    if ((int)strlen(name) > 48) name[48] = 0;
     n += snprintf(json + n, cap - n, "%s\"%s\"", fn ? "," : "", name);
     fn++;
   }
   n += snprintf(json + n, cap - n, "],\"p\":[");
-  int pn = st->pl_n > 4 ? 4 : st->pl_n;
-  for (int i = 0; i < pn; i++) {
+  int pn = 0;
+  for (int i = 0; i < st->pl_n; i++) {
+    if (!st->playlists[i].url[0] || strcmp(st->playlists[i].url, "local") == 0) continue;
     char url[MAX_URL * 2];
     json_esc(st->playlists[i].url, url, sizeof url);
-    n += snprintf(json + n, cap - n, "%s\"%s\"", i ? "," : "", url);
+    n += snprintf(json + n, cap - n, "%s\"%s\"", pn ? "," : "", url);
+    pn++;
   }
   n += snprintf(json + n, cap - n, "],\"e\":[");
   int en = 0;
-  for (int i = 0; i < st->epg_n && en < 2; i++) {
+  for (int i = 0; i < st->epg_n; i++) {
     if (!st->epg_src[i].url[0]) continue;
     char url[MAX_URL * 2];
     json_esc(st->epg_src[i].url, url, sizeof url);
@@ -1478,14 +1557,21 @@ char *cloud_make_code(const Settings *st, const Playlist *pl) {
                 st->epg_days, json_bool(st->archive_enabled) ? "true" : "false", st->archive_days, st->guide_rows,
                 st->epg_update_hours, json_bool(st->epg_auto_update) ? "true" : "false", st->language);
   int jn = (int)strlen(json);
-  char *code = (char *)malloc((size_t)jn * 2 + 8);
-  if (!code) {
+  unsigned char *gz = NULL;
+  int gn = 0;
+  if (!gzip_compress(json, jn, &gz, &gn) || !gz) {
     free(json);
     return NULL;
   }
-  memcpy(code, "ME1.", 4);
-  int ok = b64_enc((const unsigned char *)json, jn, code + 4, jn * 2 + 4);
   free(json);
+  char *code = (char *)malloc((size_t)gn * 2 + 8);
+  if (!code) {
+    free(gz);
+    return NULL;
+  }
+  memcpy(code, "ME2.", 4);
+  int ok = b64_enc(gz, gn, code + 4, gn * 2 + 4);
+  free(gz);
   if (!ok) {
     free(code);
     return NULL;
@@ -1501,8 +1587,23 @@ int cloud_copy_code(const Settings *st, const Playlist *pl) {
   return ok;
 }
 
+static void strip_ws_copy(const char *in, char *out, int max) {
+  int o = 0;
+  for (int i = 0; in && in[i] && o < max - 1; i++) {
+    unsigned char c = (unsigned char)in[i];
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') continue;
+    out[o++] = (char)c;
+  }
+  out[o] = 0;
+}
+
 int cloud_apply_code(Settings *st, Playlist *pl, const char *code) {
   if (!st || !code || !code[0]) return 0;
+  int rawcap = (int)strlen(code) + 8;
+  char *clean = (char *)malloc((size_t)rawcap);
+  if (!clean) return 0;
+  strip_ws_copy(code, clean, rawcap);
+  code = clean;
   char packed[16];
   packed[0] = 0;
   const char *body = code;
@@ -1517,10 +1618,14 @@ int cloud_apply_code(Settings *st, Playlist *pl, const char *code) {
   }
   int blen = (int)strlen(body);
   unsigned char *raw = (unsigned char *)malloc((size_t)blen + 8);
-  if (!raw) return 0;
+  if (!raw) {
+    free(clean);
+    return 0;
+  }
   int rn = b64_dec(body, raw, blen + 8);
   if (rn < 2) {
     free(raw);
+    free(clean);
     return 0;
   }
   char *json = NULL;
@@ -1529,17 +1634,20 @@ int cloud_apply_code(Settings *st, Playlist *pl, const char *code) {
     if (rn >= 4) dlen = (unsigned)raw[rn - 4] | ((unsigned)raw[rn - 3] << 8) | ((unsigned)raw[rn - 2] << 16) | ((unsigned)raw[rn - 1] << 24);
     if (dlen < 8 || dlen > 2u * 1024u * 1024u) {
       free(raw);
+      free(clean);
       return 0;
     }
     json = (char *)malloc(dlen + 1);
     if (!json) {
       free(raw);
+      free(clean);
       return 0;
     }
     unsigned got = dlen;
     if (tinf_gzip_uncompress(json, &got, raw, (unsigned)rn) != TINF_OK) {
       free(json);
       free(raw);
+      free(clean);
       return 0;
     }
     json[got] = 0;
@@ -1547,6 +1655,7 @@ int cloud_apply_code(Settings *st, Playlist *pl, const char *code) {
     json = (char *)malloc((size_t)rn + 1);
     if (!json) {
       free(raw);
+      free(clean);
       return 0;
     }
     memcpy(json, raw, (size_t)rn);
@@ -1568,6 +1677,7 @@ int cloud_apply_code(Settings *st, Playlist *pl, const char *code) {
     }
   }
   free(json);
+  free(clean);
   profile_save_settings(st);
   profile_save_sources(st);
   return ok;

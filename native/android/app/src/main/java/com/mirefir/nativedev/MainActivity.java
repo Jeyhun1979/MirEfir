@@ -33,14 +33,19 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import androidx.core.content.ContextCompat;
+import androidx.core.content.FileProvider;
+import androidx.documentfile.provider.DocumentFile;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class MainActivity extends Activity implements PlayerEngine.Listener, Voice.Callback, Update.Listener {
-  private static final int REQ_M3U = 11, REQ_FOLDER = 12, REQ_MIC = 13;
+  private static final int REQ_M3U = 11, REQ_FOLDER = 12, REQ_MIC = 13, REQ_BACKUP_SAVE = 14, REQ_BACKUP_OPEN = 15;
   private FrameLayout root;
   private SurfaceView video;
   private final SurfaceView[] tiles = new SurfaceView[4];
@@ -471,7 +476,8 @@ public class MainActivity extends Activity implements PlayerEngine.Listener, Voi
 
   @Override
   public boolean dispatchKeyEvent(KeyEvent event) {
-    if (event != null && OverlayView.isVoiceKey(event.getKeyCode())) {
+    boolean typing = overlay != null && overlay.textMode();
+    if (event != null && OverlayView.isVoiceKey(event.getKeyCode()) && !typing) {
       if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0 && overlay != null)
         overlay.startVoiceSearch();
       return true;
@@ -485,7 +491,7 @@ public class MainActivity extends Activity implements PlayerEngine.Listener, Voi
 
   @Override
   public boolean onKeyDown(int keyCode, KeyEvent event) {
-    if (OverlayView.isVoiceKey(keyCode)) {
+    if (OverlayView.isVoiceKey(keyCode) && (overlay == null || !overlay.textMode())) {
       if ((event == null || event.getRepeatCount() == 0) && overlay != null) overlay.startVoiceSearch();
       return true;
     }
@@ -756,6 +762,29 @@ public class MainActivity extends Activity implements PlayerEngine.Listener, Voi
     }
   }
 
+  void pickBackupSave() {
+    try {
+      Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+      i.addCategory(Intent.CATEGORY_OPENABLE);
+      i.setType("application/json");
+      i.putExtra(Intent.EXTRA_TITLE, "mirefir-backup.json");
+      startActivityForResult(Intent.createChooser(i, I18n.t("setExport")), REQ_BACKUP_SAVE);
+    } catch (ActivityNotFoundException e) {
+      if (overlay != null) overlay.openBrowse(1, new File("/storage"));
+    }
+  }
+
+  void pickBackupOpen() {
+    try {
+      Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+      i.addCategory(Intent.CATEGORY_OPENABLE);
+      i.setType("*/*");
+      startActivityForResult(Intent.createChooser(i, I18n.t("setImport")), REQ_BACKUP_OPEN);
+    } catch (ActivityNotFoundException e) {
+      if (overlay != null) overlay.openBrowse(2, new File("/storage"));
+    }
+  }
+
   @Override
   protected void onActivityResult(int requestCode, int resultCode, Intent data) {
     super.onActivityResult(requestCode, resultCode, data);
@@ -787,12 +816,30 @@ public class MainActivity extends Activity implements PlayerEngine.Listener, Voi
         overlay.note(err != null ? err : I18n.t("folderSaved"), 1800);
         overlay.onFolderPicked(true);
       } else if (pendingAsk == 1) {
-        File f = new File(profile.backupsDir(), "mirefir-" + System.currentTimeMillis() + ".json");
-        overlay.note(profile.exportBackup(f) != null ? I18n.t("backupSaved") : I18n.t("backupFail"), 1600);
+        overlay.note(writeBackupToTree(uri) ? I18n.t("backupSaved") : I18n.t("backupFail"), 1600);
         overlay.setMode(OverlayView.SETTINGS);
       } else {
+        importBackupUri(uri);
+      }
+    }
+    if (requestCode == REQ_BACKUP_SAVE) {
+      if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+        if (overlay != null) overlay.openBrowse(1, new File("/storage"));
+        return;
+      }
+      boolean ok = writeBackupToUri(data.getData());
+      if (overlay != null) {
+        overlay.note(ok ? I18n.t("backupSaved") : I18n.t("backupFail"), 1800);
         overlay.setMode(OverlayView.SETTINGS);
       }
+      return;
+    }
+    if (requestCode == REQ_BACKUP_OPEN) {
+      if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+        if (overlay != null) overlay.openBrowse(2, new File("/storage"));
+        return;
+      }
+      importBackupUri(data.getData());
     }
   }
 
@@ -849,6 +896,12 @@ public class MainActivity extends Activity implements PlayerEngine.Listener, Voi
    */
   private void handleIntent(Intent in) {
     if (in == null || overlay == null) return;
+    String restore = in.getStringExtra("mirefir_restore");
+    if (restore != null && !restore.isEmpty()) {
+      setIntent(new Intent(Intent.ACTION_MAIN));
+      importBackupFile(new File(restore));
+      return;
+    }
     String action = in.getAction();
     if (isVoiceAction(action)) {
       setIntent(new Intent(Intent.ACTION_MAIN));
@@ -880,8 +933,203 @@ public class MainActivity extends Activity implements PlayerEngine.Listener, Voi
       }
     }
     if (url != null) overlay.incomingUrl(url);
-    else if (file != null) importM3u(file);
+    else if (file != null) importIncomingFile(file);
     else overlay.note(I18n.t("noClipUrl"), 1600);
+  }
+
+  private boolean looksLikeBackup(Uri uri) {
+    String n = uri != null && uri.getLastPathSegment() != null ? uri.getLastPathSegment().toLowerCase(Locale.ROOT) : "";
+    if (n.endsWith(".json") || n.contains("backup") || n.contains("mirefir")) return true;
+    String t = getIntent() != null && getIntent().getType() != null ? getIntent().getType().toLowerCase(Locale.ROOT) : "";
+    return t.contains("json");
+  }
+
+  void shareCode(int dest) {
+    String code = Cloud.make(profile);
+    if (code == null || code.isEmpty()) {
+      if (overlay != null) overlay.note(I18n.t("codeNeed"), 1600);
+      return;
+    }
+    Util.setClipboard(this, code);
+    if (dest <= 0) {
+      if (overlay != null) overlay.note(I18n.t("codeCopied"), 1600);
+      return;
+    }
+    Intent i = new Intent(Intent.ACTION_SEND);
+    i.setType("text/plain");
+    i.putExtra(Intent.EXTRA_TEXT, code);
+    i.putExtra(Intent.EXTRA_SUBJECT, "MirEfir");
+    sendShare(i, dest, I18n.t("sharePaste"));
+  }
+
+  void shareBackup(int dest) {
+    File f = new File(profile.backupsDir(), "mirefir-backup.json");
+    if (profile.exportBackup(f) == null) {
+      if (overlay != null) overlay.note(I18n.t("backupFail"), 1600);
+      return;
+    }
+    if (dest <= 0) {
+      if (overlay != null) overlay.note(I18n.t("backupCopied"), 2000);
+      return;
+    }
+    Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".files", f);
+    Intent i = new Intent(Intent.ACTION_SEND);
+    i.setType("application/json");
+    i.putExtra(Intent.EXTRA_STREAM, uri);
+    i.putExtra(Intent.EXTRA_SUBJECT, "MirEfir");
+    i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+    sendShare(i, dest, I18n.t("sharePasteFile"));
+  }
+
+  private void sendShare(Intent i, int dest, String fallback) {
+    String[] pkg = {null, "org.telegram.messenger", "com.whatsapp", "ru.oneme.app", null};
+    try {
+      if (dest > 0 && dest < pkg.length && pkg[dest] != null) {
+        Intent spec = new Intent(i);
+        spec.setPackage(pkg[dest]);
+        try {
+          startActivity(spec);
+          if (overlay != null) overlay.note(I18n.t("shareSent"), 1600);
+          return;
+        } catch (ActivityNotFoundException ignored) {}
+      }
+      startActivity(Intent.createChooser(i, I18n.t(dest == 4 ? "shareMail" : "shareTitle")));
+      if (overlay != null) overlay.note(I18n.t("shareSent"), 1600);
+    } catch (Exception e) {
+      if (overlay != null) overlay.note(fallback, 2000);
+    }
+  }
+
+  private boolean writeBackupToUri(Uri uri) {
+    File tmp = new File(getCacheDir(), "mirefir-backup.json");
+    if (profile.exportBackup(tmp) == null) return false;
+    try (InputStream in = new FileInputStream(tmp);
+         OutputStream out = getContentResolver().openOutputStream(uri)) {
+      if (out == null) return false;
+      byte[] buf = new byte[8192];
+      int n;
+      while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+      out.flush();
+      return true;
+    } catch (Exception e) {
+      return false;
+    }
+  }
+
+  private boolean writeBackupToTree(Uri tree) {
+    File tmp = new File(getCacheDir(), "mirefir-backup.json");
+    if (profile.exportBackup(tmp) == null) return false;
+    DocumentFile root = DocumentFile.fromTreeUri(this, tree);
+    if (root == null) return false;
+    DocumentFile json = root.findFile("mirefir-backup.json");
+    if (json == null) json = root.createFile("application/json", "mirefir-backup.json");
+    if (json == null) return false;
+    try (InputStream in = new FileInputStream(tmp); OutputStream out = getContentResolver().openOutputStream(json.getUri())) {
+      if (out == null) return false;
+      byte[] buf = new byte[8192];
+      int n;
+      while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+      return true;
+    } catch (Exception e) {
+      return false;
+    }
+  }
+
+  private void importIncomingFile(Uri uri) {
+    if (uri == null || overlay == null) return;
+    overlay.note(I18n.t("plLoading"), 2000);
+    new Thread(() -> {
+      File tmp = new File(getCacheDir(), "incoming.bin");
+      boolean copied = copyUri(uri, tmp);
+      String text = copied ? Util.read(tmp) : null;
+      boolean backup = looksLikeBackup(uri) || looksLikeBackupText(text);
+      boolean ok = backup ? copied && profile.importBackup(text) : copied && profile.fetchPlaylist(tmp.getAbsolutePath());
+      runOnUiThread(() -> {
+        if (ok && backup) {
+          overlay.note(I18n.t("backupLoaded"), 2000);
+          overlay.bootLive();
+          if (epg != null) epg.start();
+        } else if (ok) {
+          overlay.note(I18n.t("plOn"), 1600);
+          overlay.bootLive();
+          if (epg != null) epg.start();
+        } else overlay.note(I18n.t(backup ? "backupFail" : "plFail"), 2000);
+      });
+    }, "incoming-file").start();
+  }
+
+  void importBackupUri(Uri uri) {
+    if (uri == null || overlay == null) return;
+    overlay.note(I18n.t("plLoading"), 2000);
+    new Thread(() -> {
+      File tmp = new File(getCacheDir(), "restore.json");
+      boolean copied = copyBackupFromUri(uri, tmp);
+      boolean ok = copied && profile.importBackup(Util.read(tmp));
+      runOnUiThread(() -> {
+        if (ok) {
+          overlay.note(I18n.t("backupLoaded"), 2000);
+          overlay.bootLive();
+          if (epg != null) epg.start();
+        } else overlay.note(I18n.t("backupFail"), 2000);
+      });
+    }, "backup-import").start();
+  }
+
+  void importBackupFile(File f) {
+    if (f == null) {
+      if (overlay != null) overlay.note(I18n.t("backupFail"), 2000);
+      return;
+    }
+    overlay.note(I18n.t("plLoading"), 2000);
+    new Thread(() -> {
+      boolean ok = profile.importBackup(Util.read(f));
+      runOnUiThread(() -> {
+        if (ok) {
+          overlay.note(I18n.t("backupLoaded"), 2000);
+          overlay.bootLive();
+          if (epg != null) epg.start();
+        } else overlay.note(I18n.t("backupFail"), 2000);
+      });
+    }, "backup-import").start();
+  }
+
+  private boolean copyBackupFromUri(Uri uri, File dest) {
+    if (copyUri(uri, dest) && looksLikeBackupText(Util.read(dest))) return true;
+    DocumentFile root = DocumentFile.fromTreeUri(this, uri);
+    if (root == null) root = DocumentFile.fromSingleUri(this, uri);
+    DocumentFile json = findBackupJson(root, 0);
+    return json != null && copyUri(json.getUri(), dest) && looksLikeBackupText(Util.read(dest));
+  }
+
+  private static boolean looksLikeBackupText(String t) {
+    if (t == null) return false;
+    String s = t.trim();
+    return s.startsWith("{") && (s.contains("playlistText") || s.contains("favoriteIds") || s.contains("\"settings\"")
+        || s.contains("playlists"));
+  }
+
+  private static DocumentFile findBackupJson(DocumentFile dir, int depth) {
+    if (dir == null || depth > 3) return null;
+    if (dir.isFile()) {
+      String n = dir.getName() == null ? "" : dir.getName().toLowerCase(Locale.ROOT);
+      return n.endsWith(".json") ? dir : null;
+    }
+    DocumentFile named = null, any = null;
+    DocumentFile[] kids = dir.listFiles();
+    if (kids == null) return null;
+    for (DocumentFile f : kids) {
+      if (f.isDirectory()) {
+        DocumentFile inner = findBackupJson(f, depth + 1);
+        if (inner != null && "mirefir-backup.json".equalsIgnoreCase(inner.getName())) return inner;
+        if (named == null) named = inner;
+        continue;
+      }
+      String n = f.getName() == null ? "" : f.getName().toLowerCase(Locale.ROOT);
+      if (n.equals("mirefir-backup.json")) return f;
+      if (n.endsWith(".json") && n.contains("mirefir")) named = f;
+      else if (n.endsWith(".json") && any == null) any = f;
+    }
+    return named != null ? named : any;
   }
 
   @SuppressWarnings("deprecation")

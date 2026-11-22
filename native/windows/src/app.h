@@ -10,7 +10,7 @@
 #include <string.h>
 #include <wchar.h>
 
-#define MIREFIR_VERSION "1.0.25"
+#define MIREFIR_VERSION "1.0.26"
 #define IDI_APP 1
 enum { MAX_URL = 3072, MAX_NAME = 192, MAX_UA = 256, MAX_REF = 512, MAX_FAMILY = 192, MAX_ID = 80, MAX_TVG = 96, MAX_FAV = 512, MAX_RECENT = 10, MAX_CATCHUP = 32, MAX_CATCHUP_SRC = 768, MAX_SAVED = 32, MAX_PIN = 8, MAX_KEY = 24, MAX_PATHU = 512, MAX_HIDDEN = 64 };
 
@@ -161,7 +161,10 @@ const wchar_t *i18n_wd_long(int w);
 const wchar_t *i18n_mo_short(int m);
 const wchar_t *i18n_mo_long(int m);
 int clipboard_read_utf8(char *out, int max);
+int clipboard_read_utf8_full(char *out, int max);
 int clipboard_write_utf8(const char *text);
+int clipboard_write_file_drop(const char *path);
+int gzip_compress(const void *in, int inlen, unsigned char **out, int *outlen);
 int pick_m3u_file(char *out, int max);
 int pick_folder(char *out, int max);
 int pick_json_open(char *out, int max);
@@ -328,6 +331,10 @@ void shell_layout(HWND host);
 int shell_keydown(WPARAM key);
 int shell_keyup(WPARAM key);
 int shell_char(unsigned ch);
+WPARAM shell_map_key(WPARAM key);
+int shell_typing(void);
+int shell_context(void);
+int shell_appcommand(int cmd);
 void shell_mouse_moved(void);
 void shell_tick(void);
 void shell_on_play(int index);

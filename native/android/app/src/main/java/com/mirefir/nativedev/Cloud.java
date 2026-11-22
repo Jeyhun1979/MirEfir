@@ -3,6 +3,7 @@ package com.mirefir.nativedev;
 import android.util.Base64;
 import java.nio.charset.StandardCharsets;
 import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import org.json.JSONArray;
@@ -14,35 +15,24 @@ final class Cloud {
       JSONObject o = new JSONObject();
       o.put("v", 2);
       JSONArray fav = new JSONArray();
-      int fn = 0;
-      for (int i = 0; i < p.st.fav.size() && fn < 80; i++) {
+      for (int i = 0; i < p.st.fav.size(); i++) {
         int idx = p.st.fav.get(i);
         if (idx < 0 || idx >= p.pl.size()) continue;
         String name = p.pl.get(idx).name;
         if (name == null || name.isEmpty()) continue;
-        if (name.length() > 48) name = name.substring(0, 48);
         fav.put(name);
-        fn++;
       }
       o.put("f", fav);
       JSONArray pls = new JSONArray();
-      int pn = 0;
       for (SavedLink s : p.st.playlists) {
-        if (s.url == null || s.url.isEmpty() || "local".equals(s.id)) continue;
+        if (s.url == null || s.url.isEmpty() || "local".equals(s.id) || "local".equals(s.url)) continue;
         pls.put(s.url);
-        if (++pn >= 4) break;
       }
       o.put("p", pls);
       JSONArray epg = new JSONArray();
-      int en = 0;
       for (SavedLink s : p.st.epgSrc) {
         if (s.url == null || s.url.isEmpty()) continue;
-        if (s.enabled == 1 || s.enabled == 2 || en < 2) {
-          if (!contains(epg, s.url)) {
-            epg.put(s.url);
-            if (++en >= 2) break;
-          }
-        }
+        if (!contains(epg, s.url)) epg.put(s.url);
       }
       o.put("e", epg);
       JSONObject s = new JSONObject();
@@ -69,16 +59,28 @@ final class Cloud {
       s.put("archiveDays", p.st.archiveDays);
       o.put("s", s);
       String json = o.toString();
-      String b64 = Base64.encodeToString(json.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
-      return "ME1." + b64;
+      ByteArrayOutputStream gz = new ByteArrayOutputStream();
+      GZIPOutputStream go = new GZIPOutputStream(gz);
+      go.write(json.getBytes(StandardCharsets.UTF_8));
+      go.close();
+      String b64 = Base64.encodeToString(gz.toByteArray(), Base64.NO_WRAP);
+      return "ME2." + b64;
     } catch (Exception e) {
       return "";
     }
   }
 
+  static boolean looksLike(String code) {
+    if (code == null) return false;
+    String t = code.trim().replace("\n", "").replace("\r", "").replace(" ", "");
+    if (t.length() < 8) return false;
+    char a = Character.toUpperCase(t.charAt(0));
+    return (a == 'M' || a == 'O') && t.charAt(3) == '.';
+  }
+
   static boolean apply(Profile p, String code) {
     if (code == null) return false;
-    code = code.trim().replace("\n", "").replace(" ", "");
+    code = code.trim().replace("\n", "").replace("\r", "").replace(" ", "");
     String packed = "ME1";
     String body = code;
     if (code.length() > 4 && code.charAt(3) == '.') {
@@ -114,16 +116,16 @@ final class Cloud {
       JSONObject o = new JSONObject(json);
       JSONArray pArr = o.optJSONArray("p");
       if (pArr != null) {
-        for (int i = 0; i < pArr.length() && i < 4; i++) {
+        for (int i = 0; i < pArr.length(); i++) {
           String url = pArr.optString(i, "");
           if (!url.isEmpty()) p.addPlaylistUrl(url);
         }
       }
       JSONArray eArr = o.optJSONArray("e");
       if (eArr != null) {
-        for (int i = 0; i < eArr.length() && i < 2; i++) {
+        for (int i = 0; i < eArr.length(); i++) {
           String url = eArr.optString(i, "");
-          if (!url.isEmpty()) p.addEpgUrl(url, i == 0 ? 1 : 2);
+          if (!url.isEmpty()) p.addEpgUrl(url, i == 0 ? 1 : i == 1 ? 2 : 0);
         }
       }
       JSONArray fArr = o.optJSONArray("f");
