@@ -476,9 +476,10 @@ public class MainActivity extends Activity implements PlayerEngine.Listener, Voi
 
   @Override
   public boolean dispatchKeyEvent(KeyEvent event) {
-    boolean typing = overlay != null && overlay.textMode();
-    if (event != null && OverlayView.isVoiceKey(event.getKeyCode()) && !typing) {
-      if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0 && overlay != null)
+    boolean voiceKey = event != null && OverlayView.isVoiceKey(event.getKeyCode());
+    /* в окне «Голос»/поиска поле ввода не глотает кнопку микрофона на пульте */
+    if (voiceKey && overlay != null && overlay.mode != OverlayView.URL && overlay.mode != OverlayView.PIN) {
+      if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0)
         overlay.startVoiceSearch();
       return true;
     }
@@ -491,8 +492,9 @@ public class MainActivity extends Activity implements PlayerEngine.Listener, Voi
 
   @Override
   public boolean onKeyDown(int keyCode, KeyEvent event) {
-    if (OverlayView.isVoiceKey(keyCode) && (overlay == null || !overlay.textMode())) {
-      if ((event == null || event.getRepeatCount() == 0) && overlay != null) overlay.startVoiceSearch();
+    if (OverlayView.isVoiceKey(keyCode) && overlay != null
+        && overlay.mode != OverlayView.URL && overlay.mode != OverlayView.PIN) {
+      if (event == null || event.getRepeatCount() == 0) overlay.startVoiceSearch();
       return true;
     }
     return super.onKeyDown(keyCode, event);

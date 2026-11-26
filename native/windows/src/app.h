@@ -10,7 +10,7 @@
 #include <string.h>
 #include <wchar.h>
 
-#define MIREFIR_VERSION "1.0.26"
+#define MIREFIR_VERSION "1.0.27"
 #define IDI_APP 1
 enum { MAX_URL = 3072, MAX_NAME = 192, MAX_UA = 256, MAX_REF = 512, MAX_FAMILY = 192, MAX_ID = 80, MAX_TVG = 96, MAX_FAV = 512, MAX_RECENT = 10, MAX_CATCHUP = 32, MAX_CATCHUP_SRC = 768, MAX_SAVED = 32, MAX_PIN = 8, MAX_KEY = 24, MAX_PATHU = 512, MAX_HIDDEN = 64 };
 

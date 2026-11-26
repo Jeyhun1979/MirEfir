@@ -224,6 +224,9 @@ static int enter_folder(void);
 static void ask_group_pin(int gi);
 static void run_setup_row(void);
 static void open_ch_menu(void);
+static void activate_channel(void);
+static void close_guide(void);
+static void open_guide(void);
 static void do_backup_export(void);
 static void do_backup_import(void);
 static int open_context(void);
@@ -714,15 +717,20 @@ static void apply_playing_group(int ch) {
   }
 }
 
-static void select_current_in_guide(void) {
-  int cur = player_current_index();
+static void select_channel_row(int ch) {
   g_chan_i = 0;
   for (int i = 0; i < g_in_group_n; i++) {
-    if (g_index_in_group[i] == cur) {
+    if (g_index_in_group[i] == ch) {
       g_chan_i = i;
       break;
     }
   }
+}
+
+static void select_current_in_guide(void) {
+  int cur = player_current_index();
+  if (g_mv_pick && g_mv_i >= 0 && g_mv_i < g_mv_n && g_mv_ch[g_mv_i] >= 0) cur = g_mv_ch[g_mv_i];
+  select_channel_row(cur);
 }
 
 static int guide_channel(void) {
@@ -3867,8 +3875,8 @@ static void layout(HWND host) {
     show_win(g_menu, g_mode == UI_MENU);
   }
   {
-    int multi = g_mode == UI_MENU && g_menu_page == MENU_MULTI;
-    int bar = (multi && !g_mv_menu && !g_mv_pick) ? 52 : 0;
+    int multi = (g_mode == UI_MENU && g_menu_page == MENU_MULTI) || (g_mode == UI_GUIDE && g_mv_pick && g_mv_n > 0);
+    int bar = (g_mode == UI_MENU && g_menu_page == MENU_MULTI && !g_mv_menu && !g_mv_pick) ? 52 : 0;
     int gap = 8, fr = 4;
     int area_h = h - bar;
     if (area_h < 80) area_h = h;
@@ -4048,7 +4056,11 @@ static void set_mode(int mode) {
 
 static void open_guide(void) {
   rebuild_groups();
-  apply_playing_group(player_current_index());
+  {
+    int ch = player_current_index();
+    if (g_mv_pick && g_mv_i >= 0 && g_mv_i < g_mv_n && g_mv_ch[g_mv_i] >= 0) ch = g_mv_ch[g_mv_i];
+    apply_playing_group(ch);
+  }
   if (g_in_group_n < 1) {
     remember_group(0);
     fill_group(0);
@@ -4397,8 +4409,10 @@ static int mv_place_ch(int ch) {
 static void mv_set_ch(int slot, int ch) {
   if (slot < 0 || slot >= g_mv_n || !g_pl || ch < 0 || ch >= g_pl->count) return;
   g_mv_ch[slot] = ch;
-  g_mv_pick = 0;
-  g_mv_menu = 0;
+  if (g_mode != UI_GUIDE) {
+    g_mv_pick = 0;
+    g_mv_menu = 0;
+  }
   if (slot == 0) {
     if (g_st) player_play_at(g_pl, g_st, ch, mv_start_q());
     shell_on_play(ch);
@@ -4407,6 +4421,7 @@ static void mv_set_ch(int slot, int ch) {
   }
   layout(g_host);
   if (g_menu) InvalidateRect(g_menu, NULL, FALSE);
+  if (g_guide) InvalidateRect(g_guide, NULL, FALSE);
 }
 
 static void mv_remove(int slot) {
@@ -4478,7 +4493,9 @@ static void run_mv_opt(void) {
     return;
   }
   if (i == 2) {
-    mv_open_search(2);
+    g_mv_menu = 0;
+    g_mv_pick = 2;
+    open_guide();
     return;
   }
   mv_remove(g_mv_i);
@@ -5273,7 +5290,7 @@ static void go_back(void) {
       layout(g_host);
       return;
     }
-    set_mode(UI_LIVE);
+    close_guide();
     return;
   }
   if (g_mode == UI_MENU) {
@@ -5686,7 +5703,7 @@ static LRESULT CALLBACK uiProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         GuideBox b;
         guide_box(grc.right, grc.bottom, &b);
         if (x >= b.gw + b.cw + b.pw + b.dw) {
-          set_mode(UI_LIVE);
+          close_guide();
           return 0;
         }
         int slot = y < b.y0 ? -1 : (y - b.y0) / b.row;
@@ -5706,10 +5723,7 @@ static LRESULT CALLBACK uiProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
           int idx = c0 + slot;
           if (slot >= 0 && idx >= 0 && idx < g_in_group_n) {
             g_chan_i = idx;
-            remember_group(g_group_i);
-            int ch = g_index_in_group[g_chan_i];
-            if (ch != player_current_index() && g_zap) g_zap(ch);
-            set_mode(UI_LIVE);
+            activate_channel();
           }
         } else if (x < b.gw + b.cw + b.pw) {
           g_focus_col = COL_PROGRAMS;
@@ -6347,12 +6361,37 @@ static void move_fav(int d) {
   if (g_guide) InvalidateRect(g_guide, NULL, FALSE);
 }
 
+static void close_guide(void) {
+  if (g_mv_pick) {
+    g_mv_pick = 0;
+    g_mv_menu = 0;
+    g_menu_page = MENU_MULTI;
+    set_mode(UI_MENU);
+    return;
+  }
+  set_mode(UI_LIVE);
+}
+
 static void activate_channel(void) {
   if (!g_in_group_n) return;
   remember_group(g_group_i);
   int ch = guide_channel();
-  if (ch != player_current_index() && g_zap) g_zap(ch);
-  set_mode(UI_LIVE);
+  if (g_mv_pick) {
+    int cur = (g_mv_i >= 0 && g_mv_i < g_mv_n) ? g_mv_ch[g_mv_i] : -1;
+    if (ch != cur) {
+      if (g_mv_pick == 2) mv_set_ch(g_mv_i, ch);
+      else mv_place_ch(ch);
+    } else {
+      close_guide();
+    }
+    return;
+  }
+  if (ch != player_current_index()) {
+    if (g_zap) g_zap(ch);
+    if (g_guide) InvalidateRect(g_guide, NULL, FALSE);
+    return;
+  }
+  close_guide();
 }
 
 static void run_setup_row(void) {
@@ -6916,7 +6955,7 @@ int shell_keydown(WPARAM key) {
     }
   }
   if (!typing_field() && (key == 'G' || key == VK_F1 || (g_st && key_is(g_st->key_guide, key)))) {
-    if (g_mode == UI_GUIDE) set_mode(UI_LIVE);
+    if (g_mode == UI_GUIDE) close_guide();
     else open_guide();
     return 1;
   }
@@ -7089,6 +7128,10 @@ int shell_keydown(WPARAM key) {
         g_guide_view = VIEW_GROUPS;
         g_focus_col = COL_GROUPS;
       } else {
+        if (g_mv_pick) {
+          close_guide();
+          return 1;
+        }
         g_resume_guide = 1;
         g_menu_i = 0;
         g_menu_page = MENU_MAIN;

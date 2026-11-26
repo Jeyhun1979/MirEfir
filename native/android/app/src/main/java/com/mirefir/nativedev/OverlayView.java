@@ -71,7 +71,7 @@ final class OverlayView extends View {
   int padI = 4, padFocus = PAD_NONE;
   String note = "";
   long noteUntil, padUntil, holdAt;
-  boolean holdPad, holdSub;
+  boolean holdPad, holdSub, holdChan;
   /* касания */
   boolean touching, dragging, longFired, scrubbing, burgerOpen;
   int gesture, downKind, downIdx, pressKind;
@@ -103,7 +103,8 @@ final class OverlayView extends View {
   int[] mvCh = new int[] {-1, -1, -1, -1};
   int mvN = 1, mvFocus = 0, mvMenu, mvPick;
   boolean pinOk, resumeGuide, favMoving, startRecAfterFolder;
-  int waitKey, chmCh = -1, pendingSetTab, pendingGroup = -1, plRepI = -1;
+  int waitKey, chmCh = -1, chmBack = LIVE, chmN = 1, pendingSetTab, pendingGroup = -1, plRepI = -1;
+  boolean chmOn; /* опции поверх гида, как g_chm на Windows — режим GUIDE не менять */
   int plMenu = -1, epgMenu = -1, histX, browseI, browseWhy, micI;
   long exitAt;
   File browseDir;
@@ -207,7 +208,8 @@ final class OverlayView extends View {
 
   void setMode(int m) {
     int old = mode;
-    if (old == GUIDE && m != GUIDE) restoreFolderCursor();
+    if (m != GUIDE) chmOn = false;
+    if (old == GUIDE && m != GUIDE && m != CHMENU) restoreFolderCursor();
     mode = m;
     if (m == PAD) {
       padUntil = SystemClock.uptimeMillis() + 6500;
@@ -235,6 +237,7 @@ final class OverlayView extends View {
   /** Сменить режим без сброса состояния (поиск из мультиэкрана и т.п.). */
   private void switchTo(int m) {
     int old = mode;
+    if (m != GUIDE && m != CHMENU) chmOn = false;
     mode = m;
     modeChanged(old);
     invalidate();
@@ -533,7 +536,10 @@ final class OverlayView extends View {
       case PAD: drawPad(c, w, h); break;
       case MENU: drawMenu(c, w, h); break;
       case SETTINGS: drawSettings(c, w, h); break;
-      case GUIDE: drawGuide(c, w, h); break;
+      case GUIDE:
+        drawGuide(c, w, h);
+        if (chmOn) drawChMenu(c, w, h);
+        break;
       case EXIT: drawExit(c, w, h); break;
       case SEARCH: drawSearch(c, w, h); break;
       case HISTORY: drawHistory(c, w, h); break;
@@ -2044,8 +2050,9 @@ final class OverlayView extends View {
   }
 
   /**
-   * Нажатие на микрофон в поиске. Модели Vosk нет — качаем (прогресс в строке под полем и в тосте),
-   * по готовности сразу слушаем. Модель есть — сразу слушаем.
+   * Микрофон в поиске — тот же слух, что кнопка пульта и «Голос» на pad.
+   * Vosk, если модель уже на диске; иначе системное распознавание.
+   * Качать модель только если слушать вообще нечем.
    */
   void searchMic() {
     searchI = -1;
@@ -2065,11 +2072,11 @@ final class OverlayView extends View {
       setMode(MICPERM);
       return;
     }
-    if (!voice.voskReady()) {
-      downloadVosk();
+    if (voice.available()) {
+      listenNow();
       return;
     }
-    listenNow();
+    downloadVosk();
   }
 
   private void listenNow() {
@@ -2328,21 +2335,26 @@ final class OverlayView extends View {
   }
 
   private void drawChMenu(Canvas c, int w, int h) {
-    String[] rows = {I18n.t("favorites"), I18n.t("favMove")};
-    float dw = dialogW(w, dp(320)), dh = dp(24) + rows.length * dp(54);
+    int n = Math.max(1, chmN);
+    int ch = chmCh >= 0 ? chmCh : (player != null ? player.index : -1);
+    boolean fav = ch >= 0 && profile.isFav(ch);
+    float dw = dialogW(w, dp(320)), dh = dp(24) + n * dp(54);
     float l = (w - dw) / 2f, t = (h - dh) / 2f;
     fill.setColor(panelBg(240));
     rr(c, l, t, l + dw, t + dh, dp(12));
     hit(l, t, l + dw, t + dh, H_PANEL, 0);
-    for (int i = 0; i < rows.length; i++) {
+    for (int i = 0; i < n; i++) {
       float y = t + dp(12) + i * dp(54);
       if (i == chmI && fv()) {
         fill.setColor(accent());
         c.drawRect(l, y, l + dw, y + dp(52), fill);
       }
+      String lab = i == 0
+          ? (fav ? I18n.t("favDelAction") : I18n.t("favAddAction"))
+          : I18n.t("favMove");
       text.setTextSize(font());
       text.setColor(Color.WHITE);
-      c.drawText(rows[i], l + dp(20), y + dp(33), text);
+      c.drawText(lab, l + dp(20), y + dp(33), text);
       hit(l, y, l + dw, y + dp(52), H_CHM, i);
     }
   }
@@ -2403,6 +2415,14 @@ final class OverlayView extends View {
         if (mode == PAD) keepPad();
         return true;
       }
+      if (holdChan && isOk(code)) {
+        holdChan = false;
+        if (mode == GUIDE) {
+          if (SystemClock.uptimeMillis() - holdAt >= 550) openChMenu();
+          else activateChannel();
+        }
+        return true;
+      }
       if (holdPad && isOk(code)) {
         holdPad = false;
         if (SystemClock.uptimeMillis() - holdAt >= 550 && mode == LIVE) {
@@ -2432,8 +2452,8 @@ final class OverlayView extends View {
     if (textMode() && textKey(e)) return true;
     if (handleBoundKey(code, e)) return true;
     if (e.getRepeatCount() > 0 && isOk(code)) return true;
-    if (isVoiceKey(code) && !textMode()) {
-      if (e.getRepeatCount() == 0 && host != null) host.startVoice();
+    if (isVoiceKey(code) && mode != URL && mode != PIN) {
+      if (e.getRepeatCount() == 0) startVoiceSearch();
       return true;
     }
     if (isVolUp(code)) { player.addVolume(5); return true; }
@@ -2494,11 +2514,12 @@ final class OverlayView extends View {
     if (code == KeyEvent.KEYCODE_MENU || code == KeyEvent.KEYCODE_INFO || code == KeyEvent.KEYCODE_F2
         || code == KeyEvent.KEYCODE_BUTTON_START || code == KeyEvent.KEYCODE_BUTTON_MODE
         || code == KeyEvent.KEYCODE_SETTINGS || code == KeyEvent.KEYCODE_TV_CONTENTS_MENU) {
+      if (chmOpen()) return true;
       openMainMenuFromKey();
       return true;
     }
     if (code == KeyEvent.KEYCODE_GUIDE || code == KeyEvent.KEYCODE_TV) {
-      if (mode == GUIDE) setMode(LIVE);
+      if (mode == GUIDE) closeGuide();
       else openGuide();
       return true;
     }
@@ -2624,6 +2645,11 @@ final class OverlayView extends View {
       openMainMenuFromKey();
       return true;
     }
+    if (mode == GUIDE && (Keys.is(s.keyGuide, code) || code == KeyEvent.KEYCODE_GUIDE
+        || code == KeyEvent.KEYCODE_F1 || code == KeyEvent.KEYCODE_G)) {
+      closeGuide();
+      return true;
+    }
     if (mode == LIVE || mode == PAD) {
       if (Keys.is(s.keyMute, code) || code == KeyEvent.KEYCODE_M) {
         if (player != null) player.toggleMute();
@@ -2641,7 +2667,7 @@ final class OverlayView extends View {
         return true;
       }
       if (Keys.is(s.keyGuide, code)) {
-        if (mode == GUIDE) setMode(LIVE);
+        if (mode == GUIDE) closeGuide();
         else openGuide();
         return true;
       }
@@ -2677,9 +2703,46 @@ final class OverlayView extends View {
   }
 
   private void openChMenu() {
+    chmBack = mode;
     chmI = 0;
     chmCh = mode == GUIDE ? channelAt() : (player != null ? player.index : -1);
-    setMode(CHMENU);
+    chmN = "favorites".equals(groupIdOf(groupI)) ? 2 : 1;
+    if (mode == GUIDE) {
+      chmOn = true;
+      invalidate();
+      return;
+    }
+    switchTo(CHMENU);
+  }
+
+  private void closeChMenu() {
+    chmOn = false;
+    if (mode == GUIDE) {
+      invalidate();
+      return;
+    }
+    int back = chmBack;
+    chmBack = LIVE;
+    if (back == GUIDE) switchTo(GUIDE);
+    else if (back == MULTI) switchTo(MULTI);
+    else if (back == PAD) setMode(PAD);
+    else setMode(LIVE);
+  }
+
+  private boolean chmOpen() {
+    return mode == CHMENU || (mode == GUIDE && chmOn);
+  }
+
+  private void runChMenu() {
+    int ch = chmCh >= 0 ? chmCh : (player != null ? player.index : -1);
+    if (chmI == 0) {
+      profile.toggleFav(ch);
+      note(profile.isFav(ch) ? I18n.t("favAdd") : I18n.t("favDel"), 1200);
+      closeChMenu();
+    } else {
+      chmOn = false;
+      startFavMove(ch);
+    }
   }
 
   /** Правая кнопка мыши / гиропульта: те же опции, что удержание ОК (избранное, копировать/вставить). */
@@ -2891,8 +2954,17 @@ final class OverlayView extends View {
       if (setPane == 0) { setPane = 1; setI = 0; invalidate(); return true; }
       activateRow(); return true;
     }
+    if (chmOpen()) {
+      runChMenu();
+      return true;
+    }
     if (mode == GUIDE) {
       if (favMoving) { commitFavMove(); return true; }
+      if (focusCol == COL_C && !inGroup.isEmpty()) {
+        holdChan = true;
+        holdAt = SystemClock.uptimeMillis();
+        return true;
+      }
       return guideOk();
     }
     if (mode == EXIT) {
@@ -2961,17 +3033,6 @@ final class OverlayView extends View {
     if (mode == SETUP) return setupOk();
     if (mode == SHARE) return shareOk();
     if (mode == ASK) return askOk();
-    if (mode == CHMENU) {
-      int ch = chmCh >= 0 ? chmCh : (player != null ? player.index : -1);
-      if (chmI == 0) {
-        profile.toggleFav(ch);
-        note(profile.isFav(ch) ? I18n.t("favAdd") : I18n.t("favDel"), 1200);
-        setMode(LIVE);
-      } else {
-        startFavMove(ch);
-      }
-      return true;
-    }
     return true;
   }
 
@@ -2988,6 +3049,7 @@ final class OverlayView extends View {
     if (mode == MENU) { exitI = 0; setMode(EXIT); return true; }
     if (mode == SETTINGS && setPane == 1) { setPane = 0; invalidate(); return true; }
     if (mode == SETTINGS) { setMode(MENU); return true; }
+    if (chmOpen()) return true;
     if (mode == GUIDE) return guideLeft();
     if (mode == MULTI && mvMenu == 1) { mvMenu = 0; invalidate(); return true; }
     if (mode == MULTI) { mvMove(-1); return true; }
@@ -3012,6 +3074,7 @@ final class OverlayView extends View {
     }
     if (mode == MENU) return goBack();
     if (mode == SETTINGS && setPane == 0) { setPane = 1; invalidate(); return true; }
+    if (chmOpen()) return onOk(null);
     if (mode == GUIDE) return guideRight();
     if (mode == MULTI && mvMenu == 0) { mvMove(1); return true; }
     if (mode == HISTORY) { histX = 1; invalidate(); return true; }
@@ -3027,6 +3090,12 @@ final class OverlayView extends View {
     if (mode == MENU) { menuI = (menuI + 9) % 10; invalidate(); return true; }
     if (mode == SETTINGS && setPane == 0) { setTab = (setTab + TAB_ID.length - 1) % TAB_ID.length; invalidate(); return true; }
     if (mode == SETTINGS) { setI = Math.max(0, setI - 1); invalidate(); return true; }
+    if (chmOpen()) {
+      int n = Math.max(1, chmN);
+      chmI = (chmI + n - 1) % n;
+      invalidate();
+      return true;
+    }
     if (mode == GUIDE && favMoving) { moveFav(-1); return true; }
     if (mode == GUIDE) return guideMove(-1);
     if (mode == PAD) {
@@ -3058,7 +3127,6 @@ final class OverlayView extends View {
       invalidate();
       return true;
     }
-    if (mode == CHMENU) { chmI = 1 - chmI; invalidate(); return true; }
     return true;
   }
 
@@ -3066,6 +3134,12 @@ final class OverlayView extends View {
     if (mode == MENU) { menuI = (menuI + 1) % 10; invalidate(); return true; }
     if (mode == SETTINGS && setPane == 0) { setTab = (setTab + 1) % TAB_ID.length; invalidate(); return true; }
     if (mode == SETTINGS) { fillRows(); setI = Math.min(rows.size() - 1, setI + 1); invalidate(); return true; }
+    if (chmOpen()) {
+      int n = Math.max(1, chmN);
+      chmI = (chmI + 1) % n;
+      invalidate();
+      return true;
+    }
     if (mode == GUIDE && favMoving) { moveFav(1); return true; }
     if (mode == GUIDE) return guideMove(1);
     if (mode == PAD) {
@@ -3101,7 +3175,6 @@ final class OverlayView extends View {
       invalidate();
       return true;
     }
-    if (mode == CHMENU) { chmI = 1 - chmI; invalidate(); return true; }
     return true;
   }
 
@@ -3127,7 +3200,14 @@ final class OverlayView extends View {
       return true;
     }
     if (mode == EXIT) { host.finish(); return true; }
-    if (mode == GUIDE) return guideBack();
+    if (chmOpen()) {
+      closeChMenu();
+      return true;
+    }
+    if (mode == GUIDE) {
+      holdChan = false;
+      return guideBack();
+    }
     if (mode == PAD && burgerOpen) { burgerOpen = false; invalidate(); return true; }
     if (mode == URL) { setMode(urlBack); return true; }
     if (mode == SEARCH && mvPick != 0) {
@@ -3136,7 +3216,7 @@ final class OverlayView extends View {
       return true;
     }
     if (mode == MULTI) { closeMulti(); return true; }
-    if (mode == CHMENU || mode == PAD || mode == SEARCH || mode == HISTORY
+    if (mode == PAD || mode == SEARCH || mode == HISTORY
         || mode == RECS || mode == SHARE || mode == ASK || mode == PIN) {
       setMode(LIVE);
       return true;
@@ -3239,6 +3319,10 @@ final class OverlayView extends View {
     }
     if (host != null && !host.hasMicPermission()) {
       setMode(MICPERM);
+      return;
+    }
+    if (mode == SEARCH) {
+      searchMic();
       return;
     }
     if (mode == MULTI) {
@@ -3599,12 +3683,7 @@ final class OverlayView extends View {
       return true;
     }
     if (focusCol == COL_C) {
-      rememberGroup(groupI);
-      int ch = channelAt();
-      if (ch >= 0) {
-        if (ch == player.index) setMode(LIVE);
-        else zapTo(ch);
-      }
+      activateChannel();
       return true;
     }
     if (guideI < 0 || guideI >= guideList.size()) {
@@ -3661,6 +3740,10 @@ final class OverlayView extends View {
       guideView = GV_GROUPS;
       focusCol = COL_G;
       invalidate();
+      return true;
+    }
+    if (mvPick != 0) {
+      closeGuide();
       return true;
     }
     resumeGuide = true;
@@ -3722,7 +3805,7 @@ final class OverlayView extends View {
       invalidate();
       return true;
     }
-    setMode(LIVE);
+    closeGuide();
     return true;
   }
 
@@ -3763,7 +3846,7 @@ final class OverlayView extends View {
       return true;
     }
     if (opt == 2) {
-      mvOpenSearch(2);
+      mvOpenGuidePick();
       return true;
     }
     mvRemove(mvFocus);
@@ -3778,6 +3861,12 @@ final class OverlayView extends View {
     searchQ = "";
     fillSearch();
     switchTo(SEARCH);
+  }
+
+  private void mvOpenGuidePick() {
+    mvPick = 2;
+    mvMenu = 0;
+    openGuide();
   }
 
   private void applyMvPick(int ch) {
@@ -3818,7 +3907,7 @@ final class OverlayView extends View {
     mvCh[slot] = ch;
     mvFocus = slot;
     mvMenu = 0;
-    mvPick = 0;
+    if (mode != GUIDE) mvPick = 0;
   }
 
   private void mvRemove(int slot) {
@@ -3899,7 +3988,9 @@ final class OverlayView extends View {
 
   private void openGuide() {
     rebuildGroups();
-    applyPlayingGroup(player.index);
+    int sel = player.index;
+    if (mvPick != 0 && mvFocus >= 0 && mvFocus < mvN && mvCh[mvFocus] >= 0) sel = mvCh[mvFocus];
+    applyPlayingGroup(sel);
     if (inGroup.isEmpty()) {
       rememberGroup(0);
       fillGroup();
@@ -4023,6 +4114,7 @@ final class OverlayView extends View {
 
   private void selectCurrentInGuide() {
     int cur = player.index;
+    if (mvPick != 0 && mvFocus >= 0 && mvFocus < mvN && mvCh[mvFocus] >= 0) cur = mvCh[mvFocus];
     if (cur < 0) return;
     for (int i = 0; i < inGroup.size(); i++) {
       if (inGroup.get(i) == cur) { chI = i; return; }
@@ -4069,6 +4161,46 @@ final class OverlayView extends View {
     rec.onZap();
     player.play(i, 4);
     setMode(LIVE);
+  }
+
+  private void zapStay(int i) {
+    rec.onZap();
+    player.play(i, 4);
+    invalidate();
+  }
+
+  private void closeGuide() {
+    if (mvPick != 0) {
+      mvPick = 0;
+      mvMenu = 0;
+      switchTo(MULTI);
+      applyMultiLayout();
+      return;
+    }
+    setMode(LIVE);
+  }
+
+  private void activateChannel() {
+    rememberGroup(groupI);
+    int ch = channelAt();
+    if (ch < 0) return;
+    if (mvPick != 0) {
+      int cur = (mvFocus >= 0 && mvFocus < mvN) ? mvCh[mvFocus] : -1;
+      if (ch != cur) {
+        if (mvPick == 2) mvSetCh(mvFocus, ch);
+        else mvPlaceCh(ch);
+        applyMultiLayout();
+        invalidate();
+      } else {
+        closeGuide();
+      }
+      return;
+    }
+    if (player == null || ch != player.index) {
+      zapStay(ch);
+      return;
+    }
+    closeGuide();
   }
 
   private int channelAt() {
@@ -5015,6 +5147,11 @@ final class OverlayView extends View {
         } else if (k == 0) setMode(MENU);
         break;
       case GUIDE:
+        if (chmOn) {
+          if (k == H_CHM) { chmI = i; runChMenu(); }
+          else if (k == 0) closeChMenu();
+          break;
+        }
         if (k == H_GGRP) {
           focusCol = COL_G;
           groupI = i;
@@ -5028,7 +5165,7 @@ final class OverlayView extends View {
           lChan.lastSel = i;
           rebuildDays();
           syncProgToChannel();
-          guideOk();
+          activateChannel();
         } else if (k == H_GSCHED) {
           guideView = GV_CHANNELS;
           focusCol = COL_C;
@@ -5049,7 +5186,7 @@ final class OverlayView extends View {
           jumpToDay();
         } else if (k == H_GDET) {
           focusCol = COL_DET;
-        } else if (k == 0) setMode(LIVE);
+        } else if (k == 0) closeGuide();
         break;
       case SEARCH:
         if (k == H_LIST) { searchI = i; lSearch.lastSel = i; onOk(null); }
@@ -5101,7 +5238,7 @@ final class OverlayView extends View {
         else if (k == 0) goBack();
         break;
       case CHMENU:
-        if (k == H_CHM) { chmI = i; onOk(null); }
+        if (k == H_CHM) { chmI = i; runChMenu(); }
         else if (k == 0) goBack();
         break;
       case URL:
@@ -5378,7 +5515,12 @@ final class OverlayView extends View {
           }
           break;
         case GUIDE:
-          if (old != MENU) { lGroups.reset(); lChan.reset(); lProg.reset(); lDays.reset(); }
+          if (old != MENU && old != CHMENU && old != MULTI) {
+            lGroups.reset();
+            lChan.reset();
+            lProg.reset();
+            lDays.reset();
+          }
           break;
         case SEARCH: lSearch.reset(); break;
         case HISTORY: histI = 0; lHist.reset(); break;

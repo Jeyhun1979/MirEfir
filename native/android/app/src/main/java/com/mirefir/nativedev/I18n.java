@@ -301,6 +301,8 @@ final class I18n {
     p("recInfoHint", "меню Записи · поток без перекодирования", "Recordings menu · stream without recoding");
     p("favMove", "Переместить", "Move");
     p("favMoveHint", "↑↓ порядок, ОК закрепить, Назад отмена", "↑↓ to reorder, OK to pin, Back to cancel");
+    p("favAddAction", "Добавить в избранные", "Add to favorites");
+    p("favDelAction", "Удалить из избранного", "Remove from favorites");
     p("menuHint", "↑↓ и Enter · Назад — закрыть", "↑↓ and Enter · Back closes");
     p("folderNone", "Папка не выбрана", "No folder selected");
     p("folderReset", "Папка сброшена", "Folder cleared");

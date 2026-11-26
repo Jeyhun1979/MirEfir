@@ -31,6 +31,7 @@ import androidx.media3.exoplayer.Renderer;
 import androidx.media3.exoplayer.audio.AudioRendererEventListener;
 import androidx.media3.exoplayer.audio.AudioSink;
 import androidx.media3.exoplayer.audio.DefaultAudioSink;
+import androidx.media3.exoplayer.hls.DefaultHlsExtractorFactory;
 import androidx.media3.exoplayer.hls.HlsMediaSource;
 import androidx.media3.exoplayer.mediacodec.MediaCodecInfo;
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector;
@@ -94,6 +95,10 @@ final class PlayerEngine implements Player.Listener {
   private long pauseFileMs;
   private boolean duckOn;
   private boolean quietReload;
+  private boolean sawFrame;
+  private boolean ffmpegOnce;
+  private boolean useFfmpegVideo;
+  private long readyAt;
   private int mvWant;
   private final int[] mvWantCh = new int[] {-1, -1, -1, -1};
   private int extraRetry;
@@ -228,6 +233,7 @@ final class PlayerEngine implements Player.Listener {
     }
     vidW = vidH = 0;
     audioLabel = "";
+    resetPictureWatch();
     loadCurrent();
     if (mvWant <= 1) applyVolume();
     if (changed) note(ch.name, 1600);
@@ -252,6 +258,7 @@ final class PlayerEngine implements Player.Listener {
     urls = new ArrayList<>(list);
     urlI = 0;
     altTried = false;
+    resetPictureWatch();
     loadCurrent();
     note(I18n.t("archive"), 1600);
   }
@@ -280,6 +287,7 @@ final class PlayerEngine implements Player.Listener {
     playTick = SystemClock.elapsedRealtime();
     loading = true;
     stall = 0;
+    resetPictureWatch();
     resetTrackChoices();
     player.setMediaItem(MediaItem.fromUri(uri));
     player.prepare();
@@ -316,15 +324,7 @@ final class PlayerEngine implements Player.Listener {
     MediaItem.Builder itemB = new MediaItem.Builder().setUri(url);
     if (hls) itemB.setLiveConfiguration(new MediaItem.LiveConfiguration.Builder().build());
     MediaItem item = itemB.build();
-    MediaSource src;
-    DefaultExtractorsFactory extractors = tsExtractors();
-    if (hls) {
-      src = new HlsMediaSource.Factory(ds)
-          .setAllowChunklessPreparation(true)
-          .createMediaSource(item);
-    } else {
-      src = new ProgressiveMediaSource.Factory(ds, extractors).createMediaSource(item);
-    }
+    MediaSource src = mediaSource(ds, item, url);
     resetTrackChoices();
     player.setRepeatMode(Player.REPEAT_MODE_OFF);
     player.setMediaSource(src, true);
@@ -351,8 +351,43 @@ final class PlayerEngine implements Player.Listener {
     return new DefaultExtractorsFactory()
         .setConstantBitrateSeekingEnabled(true)
         .setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES
-            | DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS
             | DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS);
+  }
+
+  private static int tsFlags() {
+    return DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES
+        | DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS;
+  }
+
+  private static MediaSource mediaSource(DataSource.Factory ds, MediaItem item, String url) {
+    if (isHls(url)) {
+      return new HlsMediaSource.Factory(ds)
+          .setAllowChunklessPreparation(false)
+          .setExtractorFactory(new DefaultHlsExtractorFactory(tsFlags(), true))
+          .createMediaSource(item);
+    }
+    return new ProgressiveMediaSource.Factory(ds, tsExtractors()).createMediaSource(item);
+  }
+
+  private void resetPictureWatch() {
+    boolean wasFfmpeg = useFfmpegVideo;
+    sawFrame = false;
+    ffmpegOnce = false;
+    useFfmpegVideo = false;
+    readyAt = 0;
+    if (wasFfmpeg) rebuild();
+  }
+
+  private void tryFfmpegVideo() {
+    if (ffmpegOnce || archive || playingFile || player == null) return;
+    ffmpegOnce = true;
+    useFfmpegVideo = true;
+    sawFrame = false;
+    readyAt = 0;
+    quietReload = true;
+    rebuild();
+    quietReload = false;
+    loadCurrent();
   }
 
   private static boolean isHls(String url) {
@@ -379,10 +414,16 @@ final class PlayerEngine implements Player.Listener {
   }
 
   @Override
+  public void onRenderedFirstFrame() {
+    sawFrame = true;
+  }
+
+  @Override
   public void onPlaybackStateChanged(int state) {
     if (state == Player.STATE_READY) {
       loading = false;
       stall = 0;
+      if (!sawFrame && readyAt == 0) readyAt = SystemClock.elapsedRealtime();
       if (listener != null) listener.onReady();
     } else if (state == Player.STATE_ENDED) {
       stall = 0;
@@ -562,6 +603,11 @@ final class PlayerEngine implements Player.Listener {
       return;
     }
     if (playingFile) return;
+    if (!sawFrame && !ffmpegOnce && state == Player.STATE_READY && readyAt > 0
+        && SystemClock.elapsedRealtime() - readyAt >= 2800) {
+      tryFfmpegVideo();
+      return;
+    }
     if (loading) {
       stall += 400;
       if (stall >= 12000) {
@@ -995,9 +1041,7 @@ final class PlayerEngine implements Player.Listener {
       String url = u.get(0);
       DataSource.Factory ds = dataFactory(url, ch.ua.isEmpty() ? headerUa() : ch.ua, ch.referer);
       MediaItem item = MediaItem.fromUri(url);
-      MediaSource src;
-      if (isHls(url)) src = new HlsMediaSource.Factory(ds).createMediaSource(item);
-      else src = new ProgressiveMediaSource.Factory(ds, tsExtractors()).createMediaSource(item);
+      MediaSource src = mediaSource(ds, item, url);
       extra[slot].setMediaSource(src);
       extra[slot].prepare();
       extra[slot].setPlayWhenReady(!duckOn);
@@ -1085,16 +1129,25 @@ final class PlayerEngine implements Player.Listener {
         out.add(new MpegAudioRenderer(eventHandler, eventListener, mpegSink));
       }
     };
-    rf.setMediaCodecSelector(codecSel(decoder));
-    if ("hardware".equals(decoder)) {
-      rf.setEnableDecoderFallback(false);
-      rf.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF);
-    } else if ("software".equals(decoder)) {
+    if (useFfmpegVideo) {
+      rf.setMediaCodecSelector((mime, secure, tunnel) -> {
+        if (mime != null && mime.startsWith("video/")) return Collections.emptyList();
+        return codecSel(decoder).getDecoderInfos(mime, secure, tunnel);
+      });
       rf.setEnableDecoderFallback(true);
       rf.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER);
     } else {
-      rf.setEnableDecoderFallback(true);
-      rf.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON);
+      rf.setMediaCodecSelector(codecSel(decoder));
+      if ("hardware".equals(decoder)) {
+        rf.setEnableDecoderFallback(false);
+        rf.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF);
+      } else if ("software".equals(decoder)) {
+        rf.setEnableDecoderFallback(true);
+        rf.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER);
+      } else {
+        rf.setEnableDecoderFallback(true);
+        rf.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON);
+      }
     }
     return rf;
   }
